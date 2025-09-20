@@ -1,36 +1,74 @@
-// server.js - Node.js backend for HubSpot integration
+// server.js - Fixed Node.js backend for HubSpot integration
 const express = require('express');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// HubSpot configuration
 const HUBSPOT_API_TOKEN = 'pat-na2-d8208ca5-8ed4-4363-a3f4-db03a84dcf94';
 const HUBSPOT_BASE_URL = 'https://api.hubapi.com';
 
-// Middleware
-app.use(cors({
-    origin: ['https://parthbadani96.github.io', 'http://localhost:3000', 'https://localhost:3000'],
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors());
 app.use(express.json());
 
-// Health check endpoint
+function makeRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+        const urlObj = new URL(url);
+        const requestOptions = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || 443,
+            path: urlObj.pathname + urlObj.search,
+            method: options.method || 'GET',
+            headers: options.headers || {}
+        };
+
+        const req = https.request(requestOptions, (res) => {
+            let data = '';
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+            res.on('end', () => {
+                try {
+                    const response = {
+                        ok: res.statusCode >= 200 && res.statusCode < 300,
+                        status: res.statusCode,
+                        json: () => Promise.resolve(JSON.parse(data)),
+                        text: () => Promise.resolve(data)
+                    };
+                    resolve(response);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(error);
+        });
+
+        if (options.body) {
+            req.write(options.body);
+        }
+
+        req.end();
+    });
+}
+
 app.get('/health', (req, res) => {
     res.json({ status: 'OK', message: 'HubSpot API proxy is running' });
 });
 
-// Create HubSpot contact endpoint
+app.get('/', (req, res) => {
+    res.json({ message: 'HubSpot Backend API is running!' });
+});
+
 app.post('/api/hubspot/contacts', async (req, res) => {
     try {
         console.log('Received contact data:', req.body);
         
         const { leadData } = req.body;
         
-        // Prepare HubSpot contact properties
         const contactProperties = {
             firstname: leadData.firstName,
             lastname: leadData.lastName,
@@ -40,17 +78,12 @@ app.post('/api/hubspot/contacts', async (req, res) => {
             hs_lead_status: leadData.qualified ? 'QUALIFIED_TO_BUY' : 'NEW',
             industry: leadData.industry || '',
             numberofemployees: leadData.companySize || '',
-            // Custom properties
-            lead_score: leadData.score ? leadData.score.toString() : '0',
-            behavioral_data: JSON.stringify(leadData.sessionData || {}),
-            estimated_revenue: leadData.estimatedRevenue || '',
-            tech_stack: leadData.technographics ? leadData.technographics.join(', ') : ''
+            lead_score: leadData.score ? leadData.score.toString() : '0'
         };
 
         console.log('Sending to HubSpot:', contactProperties);
 
-        // Make API call to HubSpot
-        const response = await fetch(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
+        const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
@@ -64,7 +97,7 @@ app.post('/api/hubspot/contacts', async (req, res) => {
         if (!response.ok) {
             const errorData = await response.text();
             console.error('HubSpot API error:', response.status, errorData);
-            throw new Error(`HubSpot API error: ${response.status} - ${errorData}`);
+            throw new Error(`HubSpot API error: ${response.status}`);
         }
 
         const result = await response.json();
@@ -86,84 +119,8 @@ app.post('/api/hubspot/contacts', async (req, res) => {
     }
 });
 
-// Update contact endpoint
-app.patch('/api/hubspot/contacts/:contactId', async (req, res) => {
-    try {
-        const { contactId } = req.params;
-        const { properties } = req.body;
-
-        const response = await fetch(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts/${contactId}`, {
-            method: 'PATCH',
-            headers: {
-                'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                properties: properties
-            })
-        });
-
-        if (!response.ok) {
-            const errorData = await response.text();
-            throw new Error(`HubSpot API error: ${response.status} - ${errorData}`);
-        }
-
-        const result = await response.json();
-        
-        res.json({
-            success: true,
-            contact: result,
-            message: 'Contact updated successfully'
-        });
-
-    } catch (error) {
-        console.error('Update error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            message: 'Failed to update contact'
-        });
-    }
-});
-
-// Get contacts endpoint (for dashboard)
-app.get('/api/hubspot/contacts', async (req, res) => {
-    try {
-        const response = await fetch(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts?limit=10&properties=firstname,lastname,email,company,lead_score,hs_lead_status`, {
-            headers: {
-                'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
-                'Content-Type': 'application/json'
-            }
-        });
-
-        if (!response.ok) {
-            throw new Error(`HubSpot API error: ${response.status}`);
-        }
-
-        const result = await response.json();
-        
-        res.json({
-            success: true,
-            contacts: result.results,
-            message: 'Contacts retrieved successfully'
-        });
-
-    } catch (error) {
-        console.error('Get contacts error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            message: 'Failed to retrieve contacts'
-        });
-    }
-});
-
-// Start server
 app.listen(PORT, () => {
-    console.log(`🚀 HubSpot API proxy server running on port ${PORT}`);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-    console.log(`📋 Contacts endpoint: POST /api/hubspot/contacts`);
+    console.log(`HubSpot API proxy server running on port ${PORT}`);
 });
-
 
 module.exports = app;
