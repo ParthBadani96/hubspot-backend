@@ -1,4 +1,4 @@
-/ server.js - Node.js backend for HubSpot integration
+// server.js - Node.js backend for HubSpot integration
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
@@ -164,5 +164,6 @@ app.listen(PORT, () => {
     console.log(`🔗 Health check: http://localhost:${PORT}/health`);
     console.log(`📋 Contacts endpoint: POST /api/hubspot/contacts`);
 });
+
 
 module.exports = app;
