@@ -6,7 +6,7 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const HUBSPOT_API_TOKEN = 'pat-na2-cbba02fc-2cb4-45c0-bff2-c865d65201d4';
+const HUBSPOT_API_TOKEN = process.env.HUBSPOT_API_TOKEN || 'fallback-token';
 const HUBSPOT_BASE_URL = 'https://api.hubapi.com';
 
 app.use(cors());
@@ -124,4 +124,5 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
