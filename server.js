@@ -262,16 +262,21 @@ app.post('/api/hubspot/contacts', async (req, res) => {
         console.log('Received contact data:', req.body);
         
         const { leadData } = req.body;
-        
-        const contactProperties = {
-            firstname: leadData.firstName,
-            lastname: leadData.lastName,
-            email: leadData.email,
-            company: leadData.company,
-            jobtitle: leadData.jobTitle,
-            hs_lead_status: 'NEW',
-            industry: leadData.industry || ''
-        };
+
+// Enrich lead data with Clay
+const enrichedLead = await enrichWithClay(leadData);
+
+const contactProperties = {
+    firstname: enrichedLead.firstName,
+    lastname: enrichedLead.lastName,
+    email: enrichedLead.email,
+    company: enrichedLead.company,
+    jobtitle: enrichedLead.jobTitle,
+    hs_lead_status: 'NEW',
+    industry: enrichedLead.industry || ''
+};
+
+console.log('Sending enriched data to HubSpot:', contactProperties);
 
         console.log('Sending to HubSpot:', contactProperties);
         
@@ -321,5 +326,6 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
