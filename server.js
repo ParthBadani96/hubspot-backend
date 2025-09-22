@@ -8,6 +8,7 @@ const PORT = process.env.PORT || 3000;
 const HUBSPOT_API_TOKEN = process.env.HUBSPOT_API_TOKEN || 'fallback-token';
 const HUBSPOT_BASE_URL = 'https://api.hubapi.com';
 const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK';
+const CLAY_API_KEY = process.env.CLAY_API_KEY || 'demo-mode';
 
 app.use(cors());
 app.use(express.json());
@@ -164,3 +165,4 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
