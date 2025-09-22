@@ -69,17 +69,19 @@ app.post('/api/hubspot/contacts', async (req, res) => {
         
         const { leadData } = req.body;
         
-        const contactProperties = {
-            firstname: leadData.firstName,
-            lastname: leadData.lastName,
-            email: leadData.email,
-            company: leadData.company,
-            jobtitle: leadData.jobTitle,
-            hs_lead_status: leadData.qualified ? 'QUALIFIED_TO_BUY' : 'NEW',
-            industry: leadData.industry || '',
-            numberofemployees: leadData.companySize || '',
-            lead_score: leadData.score ? leadData.score.toString() : '0'
-        };
+        // Replace the contactProperties object with this:
+const contactProperties = {
+    firstname: leadData.firstName,
+    lastname: leadData.lastName,
+    email: leadData.email,
+    company: leadData.company,
+    jobtitle: leadData.jobTitle,
+    hs_lead_status: 'NEW',  // Use valid status
+    industry: leadData.industry || '',
+    // Remove custom properties that don't exist
+    // numberofemployees: leadData.companySize || '',
+    // lead_score: leadData.score ? leadData.score.toString() : '0'
+};
 
         console.log('Sending to HubSpot:', contactProperties);
 
@@ -124,5 +126,6 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
