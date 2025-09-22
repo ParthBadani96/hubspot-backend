@@ -307,9 +307,16 @@ console.log('Sending enriched data to HubSpot:', contactProperties);
         res.json({
             success: true,
             contact: result,
-            slackNotified: slackSent,
-            message: 'Contact created successfully in HubSpot'
-        });
+            enrichmentData: {
+        linkedinUrl: enrichedLead.linkedinUrl,
+        seniority: enrichedLead.seniority,
+        department: enrichedLead.department,
+        companyRevenue: enrichedLead.companyRevenue,
+        technologies: enrichedLead.technologies
+    },
+    slackNotified: slackSent,
+    message: 'Contact created successfully in HubSpot with Clay enrichment'
+});
 
     } catch (error) {
         console.error('Backend error:', error);
@@ -326,6 +333,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
