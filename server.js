@@ -304,15 +304,18 @@ console.log('Sending enriched data to HubSpot:', contactProperties);
         // Send Slack notification for high-score leads
         const slackSent = await sendSlackNotification(leadData);
         
-        res.json({
-            success: true,
-            contact: result,
-            enrichmentData: {
+        // In your server.js contact creation endpoint, make sure you have:
+res.json({
+    success: true,
+    contact: result,
+    contactExists: contactExists,
+    enrichmentData: {
         linkedinUrl: enrichedLead.linkedinUrl,
         seniority: enrichedLead.seniority,
         department: enrichedLead.department,
         companyRevenue: enrichedLead.companyRevenue,
-        technologies: enrichedLead.technologies
+        technologies: enrichedLead.technologies,
+        experience_years: enrichedLead.experience_years
     },
     slackNotified: slackSent,
     message: 'Contact created successfully in HubSpot with Clay enrichment'
@@ -333,6 +336,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
