@@ -108,6 +108,8 @@ async function callClayAPI(leadData) {
 }
 
 function mockClayEnrichment(leadData) {
+    console.log('Starting mock Clay enrichment for:', leadData.firstName, leadData.lastName); // ADD THIS
+    
     const mockData = { ...leadData };
     
     // Mock person enrichment
@@ -129,9 +131,15 @@ function mockClayEnrichment(leadData) {
     mockData.dataQuality = Math.random() > 0.2 ? 'High' : 'Medium';
     
     console.log('Clay enrichment completed:', mockData.firstName, mockData.lastName);
+    console.log('Enriched data:', {  // ADD THIS
+        linkedinUrl: mockData.linkedinUrl,
+        seniority: mockData.seniority,
+        department: mockData.department,
+        companyRevenue: mockData.companyRevenue
+    });
+    
     return mockData;
 }
-
 function determineSeniority(jobTitle) {
     const title = (jobTitle || '').toLowerCase();
     if (title.includes('ceo') || title.includes('founder') || title.includes('president')) return 'C-Level';
@@ -262,25 +270,24 @@ app.post('/api/hubspot/contacts', async (req, res) => {
         console.log('Received contact data:', req.body);
         
         const { leadData } = req.body;
-
-// Enrich lead data with Clay
-const enrichedLead = await enrichWithClay(leadData);
-
-const contactProperties = {
-    firstname: enrichedLead.firstName,
-    lastname: enrichedLead.lastName,
-    email: enrichedLead.email,
-    company: enrichedLead.company,
-    jobtitle: enrichedLead.jobTitle,
-    hs_lead_status: 'NEW',
-    industry: enrichedLead.industry || ''
-};
-
-console.log('Sending enriched data to HubSpot:', contactProperties);
-
-        console.log('Sending to HubSpot:', contactProperties);
         
-        // Create contact in HubSpot
+        // CALL CLAY ENRICHMENT FIRST
+        console.log('Calling Clay enrichment...');
+        const enrichedLead = await enrichWithClay(leadData);
+        console.log('Clay enrichment complete');
+
+        const contactProperties = {
+            firstname: enrichedLead.firstName,
+            lastname: enrichedLead.lastName,
+            email: enrichedLead.email,
+            company: enrichedLead.company,
+            jobtitle: enrichedLead.jobTitle,
+            hs_lead_status: 'NEW',
+            industry: enrichedLead.industry || ''
+        };
+
+        console.log('Sending enriched data to HubSpot:', contactProperties);
+
         const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
             method: 'POST',
             headers: {
@@ -292,34 +299,57 @@ console.log('Sending enriched data to HubSpot:', contactProperties);
             })
         });
 
+        let result;
+        let isContactExists = false;
+
         if (!response.ok) {
             const errorData = await response.text();
             console.error('HubSpot API error:', response.status, errorData);
-            throw new Error(`HubSpot API error: ${response.status}`);
+            
+            if (response.status === 409) {
+                console.log('Contact already exists in HubSpot - continuing with demo');
+                isContactExists = true;
+                result = {
+                    id: 'existing-contact',
+                    properties: contactProperties
+                };
+            } else {
+                throw new Error(`HubSpot API error: ${response.status}`);
+            }
+        } else {
+            result = await response.json();
+            console.log('HubSpot success:', result);
         }
 
-        const result = await response.json();
-        console.log('HubSpot success:', result);
+        // Send Slack notification
+        let slackSent = false;
+        if (enrichedLead.score >= 80) {
+            try {
+                await sendSlackNotification(enrichedLead);
+                slackSent = true;
+                console.log('Slack notification sent successfully');
+            } catch (slackError) {
+                console.error('Slack notification failed:', slackError);
+            }
+        }
 
-        // Send Slack notification for high-score leads
-        const slackSent = await sendSlackNotification(leadData);
-        
-        // In your server.js contact creation endpoint, make sure you have:
-res.json({
-    success: true,
-    contact: result,
-    contactExists: contactExists,
-    enrichmentData: {
-        linkedinUrl: enrichedLead.linkedinUrl,
-        seniority: enrichedLead.seniority,
-        department: enrichedLead.department,
-        companyRevenue: enrichedLead.companyRevenue,
-        technologies: enrichedLead.technologies,
-        experience_years: enrichedLead.experience_years
-    },
-    slackNotified: slackSent,
-    message: 'Contact created successfully in HubSpot with Clay enrichment'
-});
+        res.json({
+            success: true,
+            contact: result,
+            contactExists: isContactExists,
+            enrichmentData: {
+                linkedinUrl: enrichedLead.linkedinUrl,
+                seniority: enrichedLead.seniority,
+                department: enrichedLead.department,
+                companyRevenue: enrichedLead.companyRevenue,
+                technologies: enrichedLead.technologies,
+                experience_years: enrichedLead.experience_years
+            },
+            slackNotified: slackSent,
+            message: isContactExists ? 
+                'Contact already exists in HubSpot - demo continued successfully' : 
+                'Contact created successfully in HubSpot with Clay enrichment'
+        });
 
     } catch (error) {
         console.error('Backend error:', error);
@@ -330,12 +360,12 @@ res.json({
         });
     }
 });
-
 app.listen(PORT, () => {
     console.log(`HubSpot API proxy server running on port ${PORT}`);
 });
 
 module.exports = app;
+
 
 
 
