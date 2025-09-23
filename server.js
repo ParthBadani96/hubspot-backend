@@ -74,39 +74,54 @@ async function enrichWithClay(leadData) {
 }
 
 async function callClayAPI(leadData) {
+    console.log('Making real Clay API call for:', leadData.firstName, leadData.lastName);
+    
     const enrichmentResults = {};
     
     // Person enrichment
     try {
+        const requestBody = {
+            email: leadData.email,
+            first_name: leadData.firstName,
+            last_name: leadData.lastName
+        };
+        
+        console.log('Clay API request:', requestBody);
+        
         const personResponse = await makeRequest('https://api.clay.com/v1/people/search', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${CLAY_API_KEY}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                email: leadData.email,
-                first_name: leadData.firstName,
-                last_name: leadData.lastName
-            })
+            body: JSON.stringify(requestBody)
         });
 
+        console.log('Clay API response status:', personResponse.status);
+        
         if (personResponse.ok) {
             const personData = await personResponse.json();
+            console.log('Clay API response data:', personData);
+            
             if (personData.data && personData.data.length > 0) {
                 const person = personData.data[0];
                 enrichmentResults.linkedinUrl = person.linkedin_url;
                 enrichmentResults.seniority = person.seniority_level;
                 enrichmentResults.department = person.department;
+                console.log('Extracted Clay data:', enrichmentResults);
+            } else {
+                console.log('Clay API returned no person data');
             }
+        } else {
+            const errorText = await personResponse.text();
+            console.error('Clay API error response:', errorText);
         }
     } catch (error) {
-        console.log('Person enrichment failed:', error.message);
+        console.error('Clay API request failed:', error.message);
     }
 
     return { ...leadData, ...enrichmentResults };
 }
-
 function mockClayEnrichment(leadData) {
     console.log('Starting mock Clay enrichment for:', leadData.firstName, leadData.lastName); // ADD THIS
     
@@ -365,6 +380,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
