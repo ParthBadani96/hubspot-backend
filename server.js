@@ -78,17 +78,21 @@ async function callClayAPI(leadData) {
     
     const enrichmentResults = {};
     
-    // Person enrichment
+    // Use Clay's current person enrichment endpoint
     try {
         const requestBody = {
-            email: leadData.email,
-            first_name: leadData.firstName,
-            last_name: leadData.lastName
+            input: {
+                email: leadData.email,
+                first_name: leadData.firstName,
+                last_name: leadData.lastName,
+                company: leadData.company
+            }
         };
         
         console.log('Clay API request:', requestBody);
         
-        const personResponse = await makeRequest('https://api.clay.com/v1/people/search', {
+        // Try the current Clay enrichment endpoint
+        const personResponse = await makeRequest('https://api.clay.com/v1/data/enrich/person', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${CLAY_API_KEY}`,
@@ -103,11 +107,14 @@ async function callClayAPI(leadData) {
             const personData = await personResponse.json();
             console.log('Clay API response data:', personData);
             
-            if (personData.data && personData.data.length > 0) {
-                const person = personData.data[0];
-                enrichmentResults.linkedinUrl = person.linkedin_url;
-                enrichmentResults.seniority = person.seniority_level;
+            if (personData && personData.data) {
+                const person = personData.data;
+                enrichmentResults.linkedinUrl = person.linkedin_url || person.linkedin;
+                enrichmentResults.seniority = person.seniority_level || person.seniority;
                 enrichmentResults.department = person.department;
+                enrichmentResults.experience_years = person.years_experience;
+                enrichmentResults.companyRevenue = person.company_revenue;
+                enrichmentResults.technologies = person.technologies || [];
                 console.log('Extracted Clay data:', enrichmentResults);
             } else {
                 console.log('Clay API returned no person data');
@@ -115,12 +122,47 @@ async function callClayAPI(leadData) {
         } else {
             const errorText = await personResponse.text();
             console.error('Clay API error response:', errorText);
+            
+            // If person enrichment fails, try company enrichment
+            await tryCompanyEnrichment(leadData, enrichmentResults);
         }
     } catch (error) {
         console.error('Clay API request failed:', error.message);
     }
 
     return { ...leadData, ...enrichmentResults };
+}
+
+// Add company enrichment as fallback
+async function tryCompanyEnrichment(leadData, enrichmentResults) {
+    try {
+        const companyResponse = await makeRequest('https://api.clay.com/v1/data/enrich/company', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${CLAY_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                input: {
+                    company_name: leadData.company,
+                    domain: leadData.email.split('@')[1]
+                }
+            })
+        });
+
+        if (companyResponse.ok) {
+            const companyData = await companyResponse.json();
+            console.log('Clay company data:', companyData);
+            
+            if (companyData && companyData.data) {
+                enrichmentResults.companyRevenue = companyData.data.revenue;
+                enrichmentResults.technologies = companyData.data.tech_stack || [];
+                enrichmentResults.companyFunding = companyData.data.funding;
+            }
+        }
+    } catch (error) {
+        console.log('Company enrichment also failed:', error.message);
+    }
 }
 function mockClayEnrichment(leadData) {
     console.log('Starting mock Clay enrichment for:', leadData.firstName, leadData.lastName); // ADD THIS
@@ -288,19 +330,20 @@ app.post('/api/hubspot/contacts', async (req, res) => {
         
         // CALL CLAY ENRICHMENT FIRST
         console.log('Calling Clay enrichment...');
-        const enrichedLead = await enrichWithClay(leadData);
-        console.log('Clay enrichment complete');
+const enrichedLead = await enrichWithClay(leadData);
+console.log('Clay enrichment complete');
+console.log('Enriched lead data:', {
+    linkedinUrl: enrichedLead.linkedinUrl,
+    seniority: enrichedLead.seniority,
+    department: enrichedLead.department,
+    companyRevenue: enrichedLead.companyRevenue
+});
 
-        const contactProperties = {
-            firstname: enrichedLead.firstName,
-            lastname: enrichedLead.lastName,
-            email: enrichedLead.email,
-            company: enrichedLead.company,
-            jobtitle: enrichedLead.jobTitle,
-            hs_lead_status: 'NEW',
-            industry: enrichedLead.industry || ''
-        };
-
+const contactProperties = {
+    firstname: enrichedLead.firstName,
+    lastname: enrichedLead.lastName,
+    // ... rest of properties
+};
         console.log('Sending enriched data to HubSpot:', contactProperties);
 
         const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
@@ -380,6 +423,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
