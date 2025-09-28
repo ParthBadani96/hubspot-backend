@@ -1,18 +1,25 @@
-// server.js - Fixed Node.js backend for HubSpot integration with Slack notifications
+/ server.js - Complete GTM Backend with All Integrations
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HUBSPOT_API_TOKEN = process.env.HUBSPOT_API_TOKEN || 'fallback-token';
+
+// Configuration - Environment Variables
+const HUBSPOT_API_TOKEN = process.env.HUBSPOT_API_TOKEN || 'demo-mode';
 const HUBSPOT_BASE_URL = 'https://api.hubapi.com';
-const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK';
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL || 'https://hooks.slack.com/demo';
 const CLAY_API_KEY = process.env.CLAY_API_KEY || 'demo-mode';
+const ASANA_ACCESS_TOKEN = process.env.ASANA_ACCESS_TOKEN || 'demo-mode';
+const ZENDESK_DOMAIN = process.env.ZENDESK_DOMAIN || 'demo';
+const ZENDESK_TOKEN = process.env.ZENDESK_TOKEN || 'demo-mode';
+const DEALHUB_API_KEY = process.env.DEALHUB_API_KEY || 'demo-mode';
 
 app.use(cors());
 app.use(express.json());
 
+// Utility function for HTTP requests
 function makeRequest(url, options = {}) {
     return new Promise((resolve, reject) => {
         const urlObj = new URL(url);
@@ -56,15 +63,18 @@ function makeRequest(url, options = {}) {
     });
 }
 
-// Clay enrichment functions
+// =============================================================================
+// CLAY ENRICHMENT ENGINE
+// =============================================================================
+
 async function enrichWithClay(leadData) {
-    // For demo purposes, use mock enrichment to avoid API costs
+    console.log('Starting Clay enrichment for:', leadData.firstName, leadData.lastName);
+    
     if (CLAY_API_KEY === 'demo-mode') {
         return mockClayEnrichment(leadData);
     }
 
     try {
-        // Real Clay API integration (use sparingly on free tier)
         const enrichedData = await callClayAPI(leadData);
         return enrichedData;
     } catch (error) {
@@ -74,11 +84,10 @@ async function enrichWithClay(leadData) {
 }
 
 async function callClayAPI(leadData) {
-    console.log('Making real Clay API call for:', leadData.firstName, leadData.lastName);
-    
+    console.log('Making Clay API call for:', leadData.firstName, leadData.lastName);
+
     const enrichmentResults = {};
-    
-    // Use Clay's current person enrichment endpoint
+
     try {
         const requestBody = {
             input: {
@@ -88,10 +97,7 @@ async function callClayAPI(leadData) {
                 company: leadData.company
             }
         };
-        
-        console.log('Clay API request:', requestBody);
-        
-        // Try the current Clay enrichment endpoint
+
         const personResponse = await makeRequest('https://api.clay.com/v1/data/enrich/person', {
             method: 'POST',
             headers: {
@@ -101,12 +107,8 @@ async function callClayAPI(leadData) {
             body: JSON.stringify(requestBody)
         });
 
-        console.log('Clay API response status:', personResponse.status);
-        
         if (personResponse.ok) {
             const personData = await personResponse.json();
-            console.log('Clay API response data:', personData);
-            
             if (personData && personData.data) {
                 const person = personData.data;
                 enrichmentResults.linkedinUrl = person.linkedin_url || person.linkedin;
@@ -115,15 +117,8 @@ async function callClayAPI(leadData) {
                 enrichmentResults.experience_years = person.years_experience;
                 enrichmentResults.companyRevenue = person.company_revenue;
                 enrichmentResults.technologies = person.technologies || [];
-                console.log('Extracted Clay data:', enrichmentResults);
-            } else {
-                console.log('Clay API returned no person data');
             }
         } else {
-            const errorText = await personResponse.text();
-            console.error('Clay API error response:', errorText);
-            
-            // If person enrichment fails, try company enrichment
             await tryCompanyEnrichment(leadData, enrichmentResults);
         }
     } catch (error) {
@@ -133,7 +128,6 @@ async function callClayAPI(leadData) {
     return { ...leadData, ...enrichmentResults };
 }
 
-// Add company enrichment as fallback
 async function tryCompanyEnrichment(leadData, enrichmentResults) {
     try {
         const companyResponse = await makeRequest('https://api.clay.com/v1/data/enrich/company', {
@@ -152,8 +146,6 @@ async function tryCompanyEnrichment(leadData, enrichmentResults) {
 
         if (companyResponse.ok) {
             const companyData = await companyResponse.json();
-            console.log('Clay company data:', companyData);
-            
             if (companyData && companyData.data) {
                 enrichmentResults.companyRevenue = companyData.data.revenue;
                 enrichmentResults.technologies = companyData.data.tech_stack || [];
@@ -161,42 +153,36 @@ async function tryCompanyEnrichment(leadData, enrichmentResults) {
             }
         }
     } catch (error) {
-        console.log('Company enrichment also failed:', error.message);
+        console.log('Company enrichment failed:', error.message);
     }
 }
+
 function mockClayEnrichment(leadData) {
-    console.log('Starting mock Clay enrichment for:', leadData.firstName, leadData.lastName); // ADD THIS
-    
+    console.log('Using mock Clay enrichment for:', leadData.firstName, leadData.lastName);
+
     const mockData = { ...leadData };
-    
-    // Mock person enrichment
     const firstNameLower = leadData.firstName.toLowerCase();
     const lastNameLower = leadData.lastName.toLowerCase();
-    
+
+    // Mock person enrichment
     mockData.linkedinUrl = `https://linkedin.com/in/${firstNameLower}-${lastNameLower}-${Math.random().toString(36).substr(2, 6)}`;
     mockData.seniority = determineSeniority(leadData.jobTitle);
     mockData.department = determineDepartment(leadData.jobTitle);
     mockData.experience_years = Math.floor(Math.random() * 15) + 3;
-    
-    // Mock company enrichment based on industry
+
+    // Mock company enrichment
     const companyData = generateCompanyData(leadData.industry, leadData.companySize);
     Object.assign(mockData, companyData);
-    
-    // Add enrichment metadata
+
+    // Enrichment metadata
     mockData.enrichmentSource = 'Clay (Simulated)';
     mockData.enrichmentTimestamp = new Date().toISOString();
     mockData.dataQuality = Math.random() > 0.2 ? 'High' : 'Medium';
-    
-    console.log('Clay enrichment completed:', mockData.firstName, mockData.lastName);
-    console.log('Enriched data:', {  // ADD THIS
-        linkedinUrl: mockData.linkedinUrl,
-        seniority: mockData.seniority,
-        department: mockData.department,
-        companyRevenue: mockData.companyRevenue
-    });
-    
+
+    console.log('Clay enrichment completed for:', mockData.firstName, mockData.lastName);
     return mockData;
 }
+
 function determineSeniority(jobTitle) {
     const title = (jobTitle || '').toLowerCase();
     if (title.includes('ceo') || title.includes('founder') || title.includes('president')) return 'C-Level';
@@ -221,8 +207,7 @@ function determineDepartment(jobTitle) {
 
 function generateCompanyData(industry, companySize) {
     const data = {};
-    
-    // Revenue estimates based on size and industry
+
     const revenueMultipliers = {
         'fintech': 1.5,
         'finance': 2.0,
@@ -231,7 +216,7 @@ function generateCompanyData(industry, companySize) {
         'manufacturing': 1.0,
         'retail': 0.8
     };
-    
+
     const baseRevenues = {
         '1-10': [0.5, 2],
         '11-50': [2, 10],
@@ -239,17 +224,16 @@ function generateCompanyData(industry, companySize) {
         '201-1000': [50, 200],
         '1000+': [200, 1000]
     };
-    
+
     const multiplier = revenueMultipliers[industry] || 1.0;
     const baseRange = baseRevenues[companySize] || [1, 5];
     const estimatedRevenue = Math.floor((Math.random() * (baseRange[1] - baseRange[0]) + baseRange[0]) * multiplier);
-    
+
     data.companyRevenue = `$${estimatedRevenue}M`;
     data.companyFunding = Math.random() > 0.6 ? `$${Math.floor(Math.random() * 100) + 10}M` : 'Bootstrapped';
     data.companyGrowthRate = `${Math.floor(Math.random() * 50) + 10}%`;
     data.employeeCount = generateEmployeeCount(companySize);
-    
-    // Technology stack based on industry
+
     const techStacks = {
         'fintech': ['Stripe', 'Plaid', 'AWS', 'React', 'Python', 'Kubernetes'],
         'finance': ['Salesforce', 'Oracle', 'SAP', 'Microsoft Azure', 'Java'],
@@ -258,9 +242,10 @@ function generateCompanyData(industry, companySize) {
         'manufacturing': ['SAP', 'Oracle', 'Microsoft', 'Industrial IoT'],
         'retail': ['Shopify', 'Magento', 'Google Analytics', 'AWS', 'React']
     };
-    
-    data.technologies = (techStacks[industry] || ['Microsoft Office', 'Google Workspace']).slice(0, Math.floor(Math.random() * 4) + 2);
-    
+
+    data.technologies = (techStacks[industry] || ['Microsoft Office', 'Google Workspace'])
+        .slice(0, Math.floor(Math.random() * 4) + 2);
+
     return data;
 }
 
@@ -272,24 +257,281 @@ function generateEmployeeCount(companySize) {
         '201-1000': [201, 1000],
         '1000+': [1000, 5000]
     };
-    
+
     const range = ranges[companySize] || [10, 50];
     return Math.floor(Math.random() * (range[1] - range[0]) + range[0]);
 }
 
-// Slack notification function
-async function sendSlackNotification(leadData) {
+// =============================================================================
+// HUBSPOT CRM INTEGRATION
+// =============================================================================
+
+async function createHubSpotContact(enrichedLead) {
+    console.log('Creating HubSpot contact for:', enrichedLead.firstName, enrichedLead.lastName);
+
+    if (HUBSPOT_API_TOKEN === 'demo-mode') {
+        console.log('Demo mode: Simulating HubSpot contact creation');
+        return {
+            id: 'demo-contact-' + Date.now(),
+            properties: generateHubSpotProperties(enrichedLead)
+        };
+    }
+
+    const contactProperties = generateHubSpotProperties(enrichedLead);
+
     try {
-        if (leadData.score >= 80) {
+        const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                properties: contactProperties
+            })
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            console.log('HubSpot contact created successfully:', result.id);
+
+            // Create deal if qualified
+            if (enrichedLead.score >= 60) {
+                await createHubSpotDeal(enrichedLead, result.id);
+            }
+
+            return result;
+        } else {
+            const errorData = await response.text();
+            if (response.status === 409) {
+                console.log('Contact already exists in HubSpot');
+                return {
+                    id: 'existing-contact-' + Date.now(),
+                    properties: contactProperties,
+                    exists: true
+                };
+            } else {
+                throw new Error(`HubSpot API error: ${response.status} - ${errorData}`);
+            }
+        }
+    } catch (error) {
+        console.error('HubSpot contact creation failed:', error);
+        throw error;
+    }
+}
+
+function generateHubSpotProperties(enrichedLead) {
+    return {
+        firstname: enrichedLead.firstName,
+        lastname: enrichedLead.lastName,
+        email: enrichedLead.email,
+        company: enrichedLead.company,
+        jobtitle: enrichedLead.jobTitle,
+        website: enrichedLead.company ? `https://${enrichedLead.company.toLowerCase().replace(/\s+/g, '')}.com` : '',
+        phone: generateMockPhone(),
+        
+        // Custom GTM properties
+        lead_score_ml: enrichedLead.score || 0,
+        territory_assignment: enrichedLead.territory || 'SMB Team',
+        forecasted_deal_value: enrichedLead.forecastedDealValue || 0,
+        ab_test_variant: enrichedLead.abVariant || 'A',
+        
+        // Clay enrichment data
+        clay_enrichment_status: 'enriched',
+        linkedin_url: enrichedLead.linkedinUrl || '',
+        seniority_level: enrichedLead.seniority || '',
+        department: enrichedLead.department || '',
+        company_revenue: enrichedLead.companyRevenue || '',
+        technologies: enrichedLead.technologies ? enrichedLead.technologies.join(', ') : '',
+        
+        // Behavioral data
+        time_on_page: enrichedLead.sessionData?.timeOnPage || 0,
+        scroll_depth: enrichedLead.sessionData?.scrollDepth || 0,
+        form_interactions: enrichedLead.sessionData?.formInteractions || 0,
+        
+        // Lead source and attribution
+        hs_lead_status: enrichedLead.status || 'New',
+        lead_source: 'Website Form',
+        original_source: 'FinFlow Demo Page',
+        
+        // Industry and company data
+        industry: enrichedLead.industry || '',
+        company_size: enrichedLead.companySize || '',
+        estimated_employee_count: enrichedLead.employeeCount || 0
+    };
+}
+
+function generateMockPhone() {
+    const areaCode = Math.floor(Math.random() * 900) + 100;
+    const exchange = Math.floor(Math.random() * 900) + 100;
+    const number = Math.floor(Math.random() * 9000) + 1000;
+    return `+1-${areaCode}-${exchange}-${number}`;
+}
+
+async function createHubSpotDeal(enrichedLead, contactId) {
+    console.log('Creating HubSpot deal for qualified lead:', enrichedLead.firstName);
+    
+    if (HUBSPOT_API_TOKEN === 'demo-mode') {
+        console.log('Demo mode: Simulating deal creation');
+        return { id: 'demo-deal-' + Date.now() };
+    }
+
+    const dealProperties = {
+        dealname: `${enrichedLead.company} - Working Capital Solution`,
+        amount: enrichedLead.forecastedDealValue || 50000,
+        dealstage: getDealStage(enrichedLead.score),
+        pipeline: 'default',
+        closedate: getCloseDate(enrichedLead.score),
+        deal_source: 'Inbound Lead',
+        deal_type: 'New Business',
+        
+        // Custom deal properties
+        lead_score: enrichedLead.score,
+        territory: enrichedLead.territory || 'SMB',
+        industry_vertical: enrichedLead.industry,
+        company_size_category: enrichedLead.companySize
+    };
+
+    try {
+        const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/deals`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                properties: dealProperties,
+                associations: [
+                    {
+                        to: { id: contactId },
+                        types: [{ associationCategory: 'HUBSPOT_DEFINED', associationTypeId: 3 }]
+                    }
+                ]
+            })
+        });
+
+        if (response.ok) {
+            const deal = await response.json();
+            console.log('Deal created successfully:', deal.id);
+            return deal;
+        } else {
+            const errorData = await response.text();
+            console.error('Deal creation failed:', errorData);
+        }
+    } catch (error) {
+        console.error('Deal creation error:', error);
+    }
+}
+
+function getDealStage(score) {
+    if (score >= 80) return 'qualifiedtobuy'; // High-intent stage
+    if (score >= 60) return 'appointmentscheduled'; // Qualified stage
+    return 'leadinqualification'; // Initial stage
+}
+
+function getCloseDate(score) {
+    const baseDate = new Date();
+    let daysToAdd = 90; // Default 90 days
+    
+    if (score >= 80) daysToAdd = 30; // Hot leads close faster
+    else if (score >= 60) daysToAdd = 60; // Qualified leads
+    
+    baseDate.setDate(baseDate.getDate() + daysToAdd);
+    return baseDate.toISOString().split('T')[0];
+}
+
+// =============================================================================
+// SLACK NOTIFICATION SYSTEM
+// =============================================================================
+
+async function sendSlackNotification(leadData) {
+    console.log('Sending Slack notification for:', leadData.firstName, leadData.lastName);
+
+    if (SLACK_WEBHOOK_URL === 'https://hooks.slack.com/demo') {
+        console.log('Demo mode: Simulating Slack notification');
+        return true;
+    }
+
+    try {
+        if (leadData.score >= 70) { // Send notifications for high-value leads
+            const urgencyLevel = leadData.score >= 80 ? 'HIGH PRIORITY' : 'QUALIFIED';
+            const emoji = leadData.score >= 80 ? '🚨' : '⭐';
+            
             const slackMessage = {
-                text: `🔥 *Hot Lead Alert!*`,
+                text: `${emoji} ${urgencyLevel} Lead Alert!`,
                 blocks: [
+                    {
+                        type: "header",
+                        text: {
+                            type: "plain_text",
+                            text: `${emoji} ${urgencyLevel} Lead Alert!`
+                        }
+                    },
+                    {
+                        type: "section",
+                        fields: [
+                            {
+                                type: "mrkdwn",
+                                text: `*Name:* ${leadData.firstName} ${leadData.lastName}`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Company:* ${leadData.company}`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Title:* ${leadData.jobTitle}`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Industry:* ${leadData.industry}`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Score:* ${leadData.score}/100`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Territory:* ${leadData.territory || 'Auto-Assigned'}`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Deal Value:* ${((leadData.forecastedDealValue || 0) / 1000).toFixed(0)}K`
+                            },
+                            {
+                                type: "mrkdwn",
+                                text: `*Email:* ${leadData.email}`
+                            }
+                        ]
+                    },
                     {
                         type: "section",
                         text: {
                             type: "mrkdwn",
-                            text: `🔥 *Hot Lead Alert!*\n\n*Name:* ${leadData.firstName} ${leadData.lastName}\n*Company:* ${leadData.company}\n*Title:* ${leadData.jobTitle}\n*Industry:* ${leadData.industry}\n*Score:* ${leadData.score}/100\n*Email:* ${leadData.email}`
+                            text: `*Enrichment Data:*\n• Seniority: ${leadData.seniority || 'Unknown'}\n• Department: ${leadData.department || 'Unknown'}\n• LinkedIn: ${leadData.linkedinUrl ? 'Available' : 'Not found'}`
                         }
+                    },
+                    {
+                        type: "actions",
+                        elements: [
+                            {
+                                type: "button",
+                                text: {
+                                    type: "plain_text",
+                                    text: "View in HubSpot"
+                                },
+                                url: `https://app.hubspot.com/contacts/your-portal/contact/${leadData.hubspotContactId}`,
+                                style: "primary"
+                            },
+                            {
+                                type: "button",
+                                text: {
+                                    type: "plain_text",
+                                    text: "Schedule Call"
+                                },
+                                url: "https://calendly.com/your-team"
+                            }
+                        ]
                     }
                 ]
             };
@@ -304,7 +546,7 @@ async function sendSlackNotification(leadData) {
                 console.log('Slack notification sent successfully');
                 return true;
             } else {
-                console.error('Failed to send Slack notification:', response.status);
+                console.error('Slack notification failed:', response.status);
                 return false;
             }
         }
@@ -314,153 +556,543 @@ async function sendSlackNotification(leadData) {
     }
 }
 
-app.get('/health', (req, res) => {
-    res.json({ status: 'OK', message: 'HubSpot API proxy is running' });
-});
+// =============================================================================
+// ASANA TASK MANAGEMENT
+// =============================================================================
 
-app.get('/', (req, res) => {
-    res.json({ message: 'HubSpot Backend API is running!' });
-});
+async function createAsanaTask(leadData) {
+    console.log('Creating Asana task for:', leadData.firstName, leadData.lastName);
 
-app.post('/api/hubspot/contacts', async (req, res) => {
+    if (ASANA_ACCESS_TOKEN === 'demo-mode') {
+        console.log('Demo mode: Simulating Asana task creation');
+        return { gid: 'demo-task-' + Date.now() };
+    }
+
+    const taskData = {
+        data: {
+            name: `Follow up with ${leadData.firstName} ${leadData.lastName} - ${leadData.company}`,
+            notes: `
+Lead Score: ${leadData.score}/100
+Company: ${leadData.company}
+Industry: ${leadData.industry}
+Territory: ${leadData.territory || 'Auto-Assigned'}
+Email: ${leadData.email}
+Phone: ${leadData.phone || 'Not provided'}
+
+Enrichment Data:
+- Seniority: ${leadData.seniority || 'Unknown'}
+- Department: ${leadData.department || 'Unknown'}
+- LinkedIn: ${leadData.linkedinUrl || 'Not found'}
+- Company Revenue: ${leadData.companyRevenue || 'Unknown'}
+
+Next Steps:
+${leadData.score >= 80 ? '• Call within 2 hours\n• Send executive briefing' : 
+  leadData.score >= 60 ? '• Call within 24 hours\n• Send product demo' : 
+  '• Add to nurture sequence\n• Schedule follow-up call'}
+            `,
+            due_on: getTaskDueDate(leadData.score),
+            projects: [getAsanaProjectId(leadData.territory)],
+            assignee: getAssigneeId(leadData.territory),
+            priority: leadData.score >= 80 ? 'urgent' : leadData.score >= 60 ? 'high' : 'medium'
+        }
+    };
+
     try {
-        console.log('Received contact data:', req.body);
-        
-        const { leadData } = req.body;
-        
-        // CALL CLAY ENRICHMENT FIRST
-        console.log('Calling Clay enrichment...');
-const enrichedLead = await enrichWithClay(leadData);
-console.log('Clay enrichment complete');
-console.log('Enriched lead data:', {
-    linkedinUrl: enrichedLead.linkedinUrl,
-    seniority: enrichedLead.seniority,
-    department: enrichedLead.department,
-    companyRevenue: enrichedLead.companyRevenue
-});
-
-const contactProperties = {
-    firstname: enrichedLead.firstName,
-    lastname: enrichedLead.lastName,
-    // ... rest of properties
-};
-        console.log('Sending enriched data to HubSpot:', contactProperties);
-
-        const response = await makeRequest(`${HUBSPOT_BASE_URL}/crm/v3/objects/contacts`, {
+        const response = await makeRequest('https://app.asana.com/api/1.0/tasks', {
             method: 'POST',
             headers: {
-                'Authorization': `Bearer ${HUBSPOT_API_TOKEN}`,
+                'Authorization': `Bearer ${ASANA_ACCESS_TOKEN}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-                properties: contactProperties
-            })
+            body: JSON.stringify(taskData)
         });
 
-        let result;
-        let isContactExists = false;
-
-        if (!response.ok) {
-            const errorData = await response.text();
-            console.error('HubSpot API error:', response.status, errorData);
-            
-            if (response.status === 409) {
-                console.log('Contact already exists in HubSpot - continuing with demo');
-                isContactExists = true;
-                result = {
-                    id: 'existing-contact',
-                    properties: contactProperties
-                };
-            } else {
-                throw new Error(`HubSpot API error: ${response.status}`);
-            }
+        if (response.ok) {
+            const task = await response.json();
+            console.log('Asana task created:', task.data.gid);
+            return task.data;
         } else {
-            result = await response.json();
-            console.log('HubSpot success:', result);
+            const errorData = await response.text();
+            console.error('Asana task creation failed:', errorData);
         }
-
-        // Send Slack notification
-        let slackSent = false;
-        if (enrichedLead.score >= 80) {
-            try {
-                await sendSlackNotification(enrichedLead);
-                slackSent = true;
-                console.log('Slack notification sent successfully');
-            } catch (slackError) {
-                console.error('Slack notification failed:', slackError);
-            }
-        }
-
-        res.json({
-            success: true,
-            contact: result,
-            contactExists: isContactExists,
-            enrichmentData: {
-                linkedinUrl: enrichedLead.linkedinUrl,
-                seniority: enrichedLead.seniority,
-                department: enrichedLead.department,
-                companyRevenue: enrichedLead.companyRevenue,
-                technologies: enrichedLead.technologies,
-                experience_years: enrichedLead.experience_years
-            },
-            slackNotified: slackSent,
-            message: isContactExists ? 
-                'Contact already exists in HubSpot - demo continued successfully' : 
-                'Contact created successfully in HubSpot with Clay enrichment'
-        });
-
     } catch (error) {
-        console.error('Backend error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message,
-            message: 'Failed to create contact in HubSpot'
-        });
-    }
-});
-app.listen(PORT, () => {
-    console.log(`HubSpot API proxy server running on port ${PORT}`);
-});
-
-module.exports = app;
-
-// Add to your server.js - HubSpot Custom Properties Creation
-async function createCustomProperties() {
-    const properties = [
-        {
-            name: "clay_enrichment_status",
-            label: "Clay Enrichment Status",
-            type: "enumeration",
-            options: [
-                {label: "Pending", value: "pending"},
-                {label: "Enriched", value: "enriched"},
-                {label: "Failed", value: "failed"}
-            ]
-        },
-        {
-            name: "lead_score_ml",
-            label: "ML Lead Score",
-            type: "number"
-        },
-        {
-            name: "territory_assignment",
-            label: "Territory Assignment",
-            type: "string"
-        },
-        {
-            name: "forecasted_deal_value",
-            label: "Forecasted Deal Value",
-            type: "number"
-        }
-    ];
-
-    for (const property of properties) {
-        await createHubSpotProperty(property);
+        console.error('Asana task creation error:', error);
     }
 }
 
+function getTaskDueDate(score) {
+    const today = new Date();
+    if (score >= 80) {
+        today.setHours(today.getHours() + 2); // 2 hours for hot leads
+    } else if (score >= 60) {
+        today.setDate(today.getDate() + 1); // 1 day for qualified
+    } else {
+        today.setDate(today.getDate() + 3); // 3 days for others
+    }
+    return today.toISOString().split('T')[0];
+}
 
+function getAsanaProjectId(territory) {
+    const projectMap = {
+        'Enterprise Team': 'project-enterprise-123',
+        'Mid-Market Team': 'project-midmarket-456',
+        'SMB Team': 'project-smb-789'
+    };
+    return projectMap[territory] || 'project-default-000';
+}
 
+function getAssigneeId(territory) {
+    const assigneeMap = {
+        'Enterprise Team': 'user-michael-123',
+        'Mid-Market Team': 'user-alex-456', 
+        'SMB Team': 'user-sarah-789'
+    };
+    return assigneeMap[territory] || 'user-default-000';
+}
 
+// =============================================================================
+// ZENDESK SUPPORT INTEGRATION
+// =============================================================================
 
+async function createZendeskTicket(leadData, type = 'deal_support') {
+    console.log('Creating Zendesk ticket for:', leadData.firstName, leadData.lastName);
 
+    if (ZENDESK_TOKEN === 'demo-mode') {
+        console.log('Demo mode: Simulating Zendesk ticket creation');
+        return { id: 'demo-ticket-' + Date.now() };
+    }
+
+    const ticketData = {
+        ticket: {
+            subject: `${type.replace('_', ' ').toUpperCase()}: ${leadData.company} - ${leadData.firstName} ${leadData.lastName}`,
+            comment: {
+                body: generateZendeskTicketBody(leadData, type)
+            },
+            priority: leadData.score >= 80 ? 'urgent' : 'high',
+            tags: [type, 'gtm', 'high-value', leadData.territory?.toLowerCase().replace(' ', '-')],
+            custom_fields: [
+                { id: 123456, value: leadData.score }, // Lead score field
+                { id: 123457, value: leadData.company }, // Company field
+                { id: 123458, value: leadData.forecastedDealValue } // Deal value field
+            ]
+        }
+    };
+
+    try {
+        const response = await makeRequest(`https://${ZENDESK_DOMAIN}.zendesk.com/api/v2/tickets.json`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${ZENDESK_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(ticketData)
+        });
+
+        if (response.ok) {
+            const ticket = await response.json();
+            console.log('Zendesk ticket created:', ticket.ticket.id);
+            return ticket.ticket;
+        } else {
+            const errorData = await response.text();
+            console.error('Zendesk ticket creation failed:', errorData);
+        }
+    } catch (error) {
+        console.error('Zendesk ticket creation error:', error);
+    }
+}
+
+function generateZendeskTicketBody(leadData, type) {
+    const baseInfo = `
+Contact Information:
+- Name: ${leadData.firstName} ${leadData.lastName}
+- Company: ${leadData.company}
+- Email: ${leadData.email}
+- Title: ${leadData.jobTitle}
+- Industry: ${leadData.industry}
+
+Lead Intelligence:
+- Score: ${leadData.score}/100
+- Territory: ${leadData.territory || 'Auto-Assigned'}
+- Deal Value: ${((leadData.forecastedDealValue || 0) / 1000).toFixed(0)}K
+- Status: ${leadData.status}
+
+Enrichment Data:
+- Seniority: ${leadData.seniority || 'Unknown'}
+- Department: ${leadData.department || 'Unknown'}
+- Company Revenue: ${leadData.companyRevenue || 'Unknown'}
+    `;
+
+    const typeSpecificContent = {
+        deal_support: `
+Deal Support Required:
+
+This is a ${leadData.score >= 80 ? 'HIGH PRIORITY' : 'qualified'} lead that requires immediate sales support.
+
+Next Steps:
+- Verify contact information
+- Prepare custom demo environment
+- Schedule discovery call
+- Send relevant case studies
+        `,
+        document_request: `
+Document Request:
+
+The prospect has requested additional documentation. Please prepare:
+- ROI calculator customized for ${leadData.industry}
+- Security documentation
+- Implementation timeline
+- Pricing information for ${leadData.companySize} companies
+        `,
+        technical_question: `
+Technical Support Required:
+
+The prospect has technical questions that need expert attention.
+Priority: ${leadData.score >= 80 ? 'URGENT' : 'HIGH'}
+
+Please assign to technical sales engineer for detailed response.
+        `
+    };
+
+    return baseInfo + (typeSpecificContent[type] || typeSpecificContent.deal_support);
+}
+
+// =============================================================================
+// DEALHUB CPQ INTEGRATION
+// =============================================================================
+
+async function createDealHubQuote(leadData) {
+    console.log('Creating DealHub quote for:', leadData.firstName, leadData.lastName);
+
+    if (DEALHUB_API_KEY === 'demo-mode') {
+        console.log('Demo mode: Simulating DealHub quote creation');
+        return { id: 'demo-quote-' + Date.now() };
+    }
+
+    const quoteData = {
+        buyer: {
+            firstName: leadData.firstName,
+            lastName: leadData.lastName,
+            email: leadData.email,
+            company: leadData.company,
+            title: leadData.jobTitle
+        },
+        deal: {
+            name: `${leadData.company} - Working Capital Solution`,
+            value: leadData.forecastedDealValue || 50000,
+            currency: 'USD',
+            closeDate: getCloseDate(leadData.score)
+        },
+        template: getQuoteTemplate(leadData),
+        customFields: {
+            leadScore: leadData.score,
+            territory: leadData.territory,
+            industry: leadData.industry,
+            companySize: leadData.companySize,
+            enrichmentData: {
+                seniority: leadData.seniority,
+                department: leadData.department,
+                companyRevenue: leadData.companyRevenue
+            }
+        }
+    };
+
+    try {
+        const response = await makeRequest('https://api.dealhub.io/api/v1/deals', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${DEALHUB_API_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(quoteData)
+        });
+
+        if (response.ok) {
+            const quote = await response.json();
+            console.log('DealHub quote created:', quote.id);
+            return quote;
+        } else {
+            const errorData = await response.text();
+            console.error('DealHub quote creation failed:', errorData);
+        }
+    } catch (error) {
+        console.error('DealHub quote creation error:', error);
+    }
+}
+
+function getQuoteTemplate(leadData) {
+    if (leadData.companySize === '1000+' || leadData.score >= 80) {
+        return 'enterprise-custom-template';
+    } else if (leadData.companySize === '201-1000' || leadData.companySize === '51-200') {
+        return 'midmarket-template';
+    } else {
+        return 'smb-standard-template';
+    }
+}
+
+// =============================================================================
+// TERRITORY ASSIGNMENT ENGINE
+// =============================================================================
+
+function assignTerritory(leadData) {
+    // Territory assignment logic based on company size, industry, and geography
+    let territory = 'SMB Team';
+    let assignedRep = 'Sarah Johnson';
+
+    if (leadData.companySize === '1000+') {
+        territory = 'Enterprise Team';
+        assignedRep = 'Michael Chen';
+    } else if (leadData.companySize === '201-1000' || 
+               (leadData.companySize === '51-200' && leadData.score >= 70)) {
+        territory = 'Mid-Market Team';
+        assignedRep = 'Alex Rodriguez';
+    }
+
+    // Industry-specific routing
+    if (leadData.industry === 'fintech' && leadData.score >= 80) {
+        territory = 'Enterprise Team'; // FinTech specialist
+        assignedRep = 'Michael Chen';
+    }
+
+    return { territory, assignedRep };
+}
+
+// =============================================================================
+// MAIN API ENDPOINTS
+// =============================================================================
+
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'OK', 
+        message: 'Complete GTM Backend is running',
+        integrations: {
+            hubspot: HUBSPOT_API_TOKEN !== 'demo-mode' ? 'connected' : 'demo-mode',
+            clay: CLAY_API_KEY !== 'demo-mode' ? 'connected' : 'demo-mode',
+            slack: SLACK_WEBHOOK_URL !== 'https://hooks.slack.com/demo' ? 'connected' : 'demo-mode',
+            asana: ASANA_ACCESS_TOKEN !== 'demo-mode' ? 'connected' : 'demo-mode',
+            zendesk: ZENDESK_TOKEN !== 'demo-mode' ? 'connected' : 'demo-mode',
+            dealhub: DEALHUB_API_KEY !== 'demo-mode' ? 'connected' : 'demo-mode'
+        }
+    });
+});
+
+app.get('/', (req, res) => {
+    res.json({ 
+        message: 'Complete GTM Backend API is running!',
+        version: '2.0.0',
+        features: [
+            'HubSpot CRM Integration',
+            'Clay Data Enrichment',
+            'Slack Notifications',
+            'Asana Task Management',
+            'Zendesk Support Integration',
+            'DealHub CPQ Integration',
+            'Territory Assignment',
+            'Lead Scoring & Qualification',
+            'Deal Pipeline Management'
+        ]
+    });
+});
+
+// Main contact creation endpoint with full GTM automation
+app.post('/api/hubspot/contacts', async (req, res) => {
+    try {
+        console.log('=== GTM LEAD PROCESSING STARTED ===');
+        console.log('Received lead data:', req.body);
+
+        const { leadData } = req.body;
+        const processingResults = {
+            success: true,
+            contact: null,
+            enrichmentData: null,
+            automationResults: {
+                slack: false,
+                asana: false,
+                zendesk: false,
+                dealhub: false
+            },
+            errors: []
+        };
+
+        // Step 1: Territory Assignment
+        console.log('Step 1: Territory Assignment');
+        const territoryAssignment = assignTerritory(leadData);
+        leadData.territory = territoryAssignment.territory;
+        leadData.assignedRep = territoryAssignment.assignedRep;
+        console.log('Territory assigned:', territoryAssignment);
+
+        // Step 2: Clay Enrichment
+        console.log('Step 2: Clay Enrichment');
+        const enrichedLead = await enrichWithClay(leadData);
+        console.log('Enrichment completed');
+
+        // Step 3: HubSpot Contact & Deal Creation
+        console.log('Step 3: HubSpot Integration');
+        try {
+            const hubspotContact = await createHubSpotContact(enrichedLead);
+            enrichedLead.hubspotContactId = hubspotContact.id;
+            processingResults.contact = hubspotContact;
+            console.log('HubSpot contact created/updated');
+        } catch (hubspotError) {
+            console.error('HubSpot integration failed:', hubspotError);
+            processingResults.errors.push('HubSpot: ' + hubspotError.message);
+        }
+
+        // Step 4: Slack Notification (for high-value leads)
+        console.log('Step 4: Slack Notification');
+        try {
+            const slackSent = await sendSlackNotification(enrichedLead);
+            processingResults.automationResults.slack = slackSent;
+            if (slackSent) console.log('Slack notification sent');
+        } catch (slackError) {
+            console.error('Slack notification failed:', slackError);
+            processingResults.errors.push('Slack: ' + slackError.message);
+        }
+
+        // Step 5: Asana Task Creation
+        console.log('Step 5: Asana Task Creation');
+        try {
+            const asanaTask = await createAsanaTask(enrichedLead);
+            processingResults.automationResults.asana = !!asanaTask;
+            if (asanaTask) console.log('Asana task created');
+        } catch (asanaError) {
+            console.error('Asana task creation failed:', asanaError);
+            processingResults.errors.push('Asana: ' + asanaError.message);
+        }
+
+        // Step 6: Zendesk Support Ticket (for qualified leads)
+        console.log('Step 6: Zendesk Integration');
+        if (enrichedLead.score >= 60) {
+            try {
+                const zendeskTicket = await createZendeskTicket(enrichedLead);
+                processingResults.automationResults.zendesk = !!zendeskTicket;
+                if (zendeskTicket) console.log('Zendesk ticket created');
+            } catch (zendeskError) {
+                console.error('Zendesk ticket creation failed:', zendeskError);
+                processingResults.errors.push('Zendesk: ' + zendeskError.message);
+            }
+        }
+
+        // Step 7: DealHub Quote (for enterprise leads)
+        console.log('Step 7: DealHub CPQ Integration');
+        if (enrichedLead.score >= 70 && enrichedLead.territory === 'Enterprise Team') {
+            try {
+                const dealHubQuote = await createDealHubQuote(enrichedLead);
+                processingResults.automationResults.dealhub = !!dealHubQuote;
+                if (dealHubQuote) console.log('DealHub quote created');
+            } catch (dealHubError) {
+                console.error('DealHub quote creation failed:', dealHubError);
+                processingResults.errors.push('DealHub: ' + dealHubError.message);
+            }
+        }
+
+        // Prepare response
+        processingResults.enrichmentData = {
+            linkedinUrl: enrichedLead.linkedinUrl,
+            seniority: enrichedLead.seniority,
+            department: enrichedLead.department,
+            companyRevenue: enrichedLead.companyRevenue,
+            technologies: enrichedLead.technologies,
+            experience_years: enrichedLead.experience_years,
+            territory: enrichedLead.territory,
+            assignedRep: enrichedLead.assignedRep
+        };
+
+        console.log('=== GTM LEAD PROCESSING COMPLETED ===');
+        console.log('Processing results:', processingResults);
+
+        res.json({
+            success: true,
+            message: 'Lead processed successfully through complete GTM pipeline',
+            contact: processingResults.contact,
+            enrichmentData: processingResults.enrichmentData,
+            automation: processingResults.automationResults,
+            errors: processingResults.errors,
+            slackNotified: processingResults.automationResults.slack,
+            pipeline: {
+                hubspot: !!processingResults.contact,
+                clay: true,
+                slack: processingResults.automationResults.slack,
+                asana: processingResults.automationResults.asana,
+                zendesk: processingResults.automationResults.zendesk,
+                dealhub: processingResults.automationResults.dealhub
+            }
+        });
+
+    } catch (error) {
+        console.error('=== GTM PROCESSING ERROR ===');
+        console.error('Error details:', error);
+        
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            message: 'GTM pipeline processing failed',
+            timestamp: new Date().toISOString()
+        });
+    }
+});
+
+// Additional API endpoints for GTM functionality
+app.get('/api/territory/:companySize/:industry', (req, res) => {
+    const { companySize, industry } = req.params;
+    const mockLead = { companySize, industry, score: 75 };
+    const assignment = assignTerritory(mockLead);
+    res.json(assignment);
+});
+
+app.post('/api/zendesk/ticket', async (req, res) => {
+    try {
+        const { leadData, type } = req.body;
+        const ticket = await createZendeskTicket(leadData, type);
+        res.json({ success: true, ticket });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/dealhub/quote', async (req, res) => {
+    try {
+        const { leadData } = req.body;
+        const quote = await createDealHubQuote(leadData);
+        res.json({ success: true, quote });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/analytics/pipeline', (req, res) => {
+    // Mock pipeline analytics
+    res.json({
+        totalPipelineValue: 2400000,
+        dealsByStage: {
+            'leadinqualification': 12,
+            'appointmentscheduled': 8,
+            'qualifiedtobuy': 5,
+            'presentationscheduled': 3,
+            'decisionmakerboughtin': 2
+        },
+        conversionRates: {
+            'lead_to_qualified': 0.73,
+            'qualified_to_opportunity': 0.65,
+            'opportunity_to_closed': 0.42
+        },
+        forecastAccuracy: 0.87,
+        averageDealSize: 75000,
+        averageSalesCycle: 67
+    });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`=== COMPLETE GTM BACKEND STARTED ===`);
+    console.log(`Server running on port ${PORT}`);
+    console.log('Integrated systems:');
+    console.log('- HubSpot CRM:', HUBSPOT_API_TOKEN !== 'demo-mode' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('- Clay Enrichment:', CLAY_API_KEY !== 'demo-mode' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('- Slack Notifications:', SLACK_WEBHOOK_URL !== 'https://hooks.slack.com/demo' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('- Asana Tasks:', ASANA_ACCESS_TOKEN !== 'demo-mode' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('- Zendesk Support:', ZENDESK_TOKEN !== 'demo-mode' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('- DealHub CPQ:', DEALHUB_API_KEY !== 'demo-mode' ? 'CONNECTED' : 'DEMO MODE');
+    console.log('==========================================');
+});
+
+module.exports = app;
