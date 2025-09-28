@@ -424,7 +424,40 @@ app.listen(PORT, () => {
 
 module.exports = app;
 
+// Add to your server.js - HubSpot Custom Properties Creation
+async function createCustomProperties() {
+    const properties = [
+        {
+            name: "clay_enrichment_status",
+            label: "Clay Enrichment Status",
+            type: "enumeration",
+            options: [
+                {label: "Pending", value: "pending"},
+                {label: "Enriched", value: "enriched"},
+                {label: "Failed", value: "failed"}
+            ]
+        },
+        {
+            name: "lead_score_ml",
+            label: "ML Lead Score",
+            type: "number"
+        },
+        {
+            name: "territory_assignment",
+            label: "Territory Assignment",
+            type: "string"
+        },
+        {
+            name: "forecasted_deal_value",
+            label: "Forecasted Deal Value",
+            type: "number"
+        }
+    ];
 
+    for (const property of properties) {
+        await createHubSpotProperty(property);
+    }
+}
 
 
 
