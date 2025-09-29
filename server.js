@@ -322,6 +322,12 @@ async function createHubSpotContact(enrichedLead) {
 }
 
 function generateHubSpotProperties(enrichedLead) {
+    // Map custom status to valid HubSpot status
+    let hubspotStatus = 'NEW';
+    if (enrichedLead.status === 'Hot Lead') hubspotStatus = 'OPEN';
+    else if (enrichedLead.status === 'Qualified') hubspotStatus = 'OPEN';
+    else if (enrichedLead.status === 'Warm') hubspotStatus = 'IN_PROGRESS';
+    
     return {
         firstname: enrichedLead.firstName,
         lastname: enrichedLead.lastName,
@@ -331,7 +337,7 @@ function generateHubSpotProperties(enrichedLead) {
         website: enrichedLead.company ? `https://${enrichedLead.company.toLowerCase().replace(/\s+/g, '')}.com` : '',
         phone: generateMockPhone(),
         
-        // Custom GTM properties
+        // Custom GTM properties (that you created)
         lead_score_ml: enrichedLead.score || 0,
         territory_assignment: enrichedLead.territory || 'SMB Team',
         forecasted_deal_value: enrichedLead.forecastedDealValue || 0,
@@ -345,20 +351,15 @@ function generateHubSpotProperties(enrichedLead) {
         company_revenue: enrichedLead.companyRevenue || '',
         technologies: enrichedLead.technologies ? enrichedLead.technologies.join(', ') : '',
         
-        // Behavioral data
-        time_on_page: enrichedLead.sessionData?.timeOnPage || 0,
-        scroll_depth: enrichedLead.sessionData?.scrollDepth || 0,
+        // Behavioral data (you created these)
         form_interactions: enrichedLead.sessionData?.formInteractions || 0,
         
-        // Lead source and attribution
-        hs_lead_status: enrichedLead.status || 'New',
-        lead_source: 'Website Form',
-        original_source: 'FinFlow Demo Page',
+        // Use valid HubSpot status
+        hs_lead_status: hubspotStatus,
         
-        // Industry and company data
+        // Standard HubSpot properties
         industry: enrichedLead.industry || '',
-        company_size: enrichedLead.companySize || '',
-        estimated_employee_count: enrichedLead.employeeCount || 0
+        numemployees: enrichedLead.employeeCount || 0
     };
 }
 
@@ -1097,5 +1098,6 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
