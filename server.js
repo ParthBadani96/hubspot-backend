@@ -14,6 +14,7 @@ const CLAY_API_KEY = process.env.CLAY_API_KEY || 'demo-mode';
 const ASANA_ACCESS_TOKEN = process.env.ASANA_ACCESS_TOKEN || 'demo-mode';
 const ZENDESK_DOMAIN = process.env.ZENDESK_DOMAIN || 'demo';
 const ZENDESK_TOKEN = process.env.ZENDESK_TOKEN || 'demo-mode';
+const ZENDESK_EMAIL = process.env.ZENDESK_EMAIL || 'demo@example.com';
 const DEALHUB_API_KEY = process.env.DEALHUB_API_KEY || 'demo-mode';
 
 app.use(cors());
@@ -634,11 +635,11 @@ function getTaskDueDate(score) {
 
 function getAsanaProjectId(territory) {
     const projectMap = {
-        'Enterprise Team': 'project-enterprise-123',
-        'Mid-Market Team': 'project-midmarket-456',
-        'SMB Team': 'project-smb-789'
+        'Enterprise Team': '1211489117679342', // Deal Support project
+        'Mid-Market Team': '1211489117679297', // Sales Follow-ups project  
+        'SMB Team': '1211489117679297' // Sales Follow-ups project
     };
-    return projectMap[territory] || 'project-default-000';
+    return projectMap[territory] || '1211489117679297';
 }
 
 function getAssigneeId(territory) {
@@ -680,11 +681,11 @@ async function createZendeskTicket(leadData, type = 'deal_support') {
 
     try {
         const response = await makeRequest(`https://${ZENDESK_DOMAIN}.zendesk.com/api/v2/tickets.json`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${ZENDESK_TOKEN}`,
-                'Content-Type': 'application/json'
-            },
+    method: 'POST',
+    headers: {
+        'Authorization': `Basic ${Buffer.from(`${ZENDESK_EMAIL}/token:${ZENDESK_TOKEN}`).toString('base64')}`,
+        'Content-Type': 'application/json'
+    },
             body: JSON.stringify(ticketData)
         });
 
@@ -1096,4 +1097,5 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
