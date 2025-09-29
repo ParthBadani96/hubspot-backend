@@ -321,6 +321,17 @@ async function createHubSpotContact(enrichedLead) {
     }
 }
 
+function mapCompanySizeToHubSpot(size) {
+    const mapping = {
+        '1-10': '1-5',
+        '11-50': '25-50',
+        '51-200': '100-500',
+        '201-1000': '500-1000',
+        '1000+': '1000+'
+    };
+    return mapping[size] || '1-5';
+}
+
 function generateHubSpotProperties(enrichedLead) {
     // Map custom status to valid HubSpot status
     let hubspotStatus = 'NEW';
@@ -359,7 +370,7 @@ function generateHubSpotProperties(enrichedLead) {
         
         // Standard HubSpot properties
         industry: enrichedLead.industry || '',
-        numemployees: enrichedLead.companySize || '1-5'
+        numemployees: mapCompanySizeToHubSpot(enrichedLead.companySize)
     };
 }
 
@@ -672,11 +683,6 @@ async function createZendeskTicket(leadData, type = 'deal_support') {
             },
             priority: leadData.score >= 80 ? 'urgent' : 'high',
             tags: [type, 'gtm', 'high-value', leadData.territory?.toLowerCase().replace(' ', '-')],
-            custom_fields: [
-                { id: 123456, value: leadData.score }, // Lead score field
-                { id: 123457, value: leadData.company }, // Company field
-                { id: 123458, value: leadData.forecastedDealValue } // Deal value field
-            ]
         }
     };
 
@@ -1098,6 +1104,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
