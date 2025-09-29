@@ -359,7 +359,7 @@ function generateHubSpotProperties(enrichedLead) {
         
         // Standard HubSpot properties
         industry: enrichedLead.industry || '',
-        numemployees: enrichedLead.employeeCount || 0
+        numemployees: enrichedLead.companySize || '1-5'
     };
 }
 
@@ -645,9 +645,9 @@ function getAsanaProjectId(territory) {
 
 function getAssigneeId(territory) {
     const assigneeMap = {
-        'Enterprise Team': 'user-michael-123',
-        'Mid-Market Team': 'user-alex-456', 
-        'SMB Team': 'user-sarah-789'
+        'Enterprise Team': '1211488794606450',
+        'Mid-Market Team': '1211488794606450', 
+        'SMB Team': '1211488794606450'
     };
     return assigneeMap[territory] || 'user-default-000';
 }
@@ -1098,6 +1098,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
