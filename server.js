@@ -1094,7 +1094,15 @@ app.get('/api/analytics/pipeline', (req, res) => {
         averageSalesCycle: 67
     });
 });
-
+// Snowflake endpoint - get contacts
+app.get('/api/contacts', async (req, res) => {
+  try {
+    const contacts = await snowflake.getContacts(10);
+    res.json({ success: true, contacts });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 // Start server
 app.listen(PORT, () => {
     console.log(`=== COMPLETE GTM BACKEND STARTED ===`);
@@ -1110,6 +1118,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
