@@ -1,4 +1,6 @@
 // server.js - Complete GTM Backend with All Integrations
+require('dotenv').config();
+const snowflake = require('./snowflake-integration');
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
@@ -1104,6 +1106,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
