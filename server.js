@@ -6,6 +6,10 @@ const cors = require('cors');
 const https = require('https');
 
 const app = express();
+// Connect to Snowflake on startup
+snowflake.connectToSnowflake()
+  .then(() => console.log('✅ Snowflake connected'))
+  .catch(err => console.error('❌ Snowflake failed:', err.message));
 const PORT = process.env.PORT || 3000;
 
 // Configuration - Environment Variables
@@ -1106,6 +1110,7 @@ app.listen(PORT, () => {
 });
 
 module.exports = app;
+
 
 
 
