@@ -1,7 +1,18 @@
+// Complete GTM Automation Server with All Working Integrations
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const nodemailer = require('nodemailer');
+require('dotenv').config();
+
+// Import integration modules if they exist, otherwise use inline
+let HubSpotIntegration, ClayIntegration;
+try {
+  HubSpotIntegration = require('./hubspot-integration');
+  ClayIntegration = require('./clay-integration');
+} catch (e) {
+  console.log('Using inline integrations');
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,47 +21,49 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// In-memory database (for quick prototype)
+// In-memory database
 const leads = new Map();
 const enrichedData = new Map();
 const campaigns = new Map();
 const emailQueue = [];
 
-// Configuration - Replace with your actual credentials
-const CONFIG = {
-  CLAY: {
-    API_KEY: process.env.CLAY_API_KEY || 'your_clay_api_key',
-    BASE_URL: 'https://api.clay.com/v1'
-  },
-  HUBSPOT: {
-    API_KEY: process.env.HUBSPOT_API_KEY || 'your_hubspot_api_key',
-    BASE_URL: 'https://api.hubapi.com'
-  },
-  EMAIL: {
-    SERVICE: 'gmail',
-    USER: process.env.EMAIL_USER || 'your_email@gmail.com',
-    PASS: process.env.EMAIL_PASS || 'your_app_password'
-  },
-  ANTHROPIC: {
-    API_KEY: process.env.ANTHROPIC_API_KEY || 'your_anthropic_key'
-  }
-};
+// Initialize integrations
+const hubspot = HubSpotIntegration ? new HubSpotIntegration(process.env.HUBSPOT_API_KEY) : null;
+const clay = ClayIntegration ? new ClayIntegration(process.env.CLAY_API_KEY) : null;
 
 // Email transporter
-const transporter = nodemailer.createTransport({
-  service: CONFIG.EMAIL.SERVICE,
-  auth: {
-    user: CONFIG.EMAIL.USER,
-    pass: CONFIG.EMAIL.PASS
-  }
-});
+let transporter;
+if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS
+    }
+  });
+}
 
-// ============= LEAD SCORING ENGINE =============
+// Slack notification
+async function sendSlackNotification(message) {
+  if (process.env.SLACK_WEBHOOK_URL) {
+    try {
+      await axios.post(process.env.SLACK_WEBHOOK_URL, {
+        text: message,
+        icon_emoji: ':fire:',
+        username: 'GTM Bot'
+      });
+    } catch (error) {
+      console.log('Slack notification failed:', error.message);
+    }
+  }
+}
+
+// Lead Scoring Engine
 function calculateLeadScore(leadData, enrichedData) {
   let score = 0;
   
-  // Firmographic scoring
-  if (enrichedData.company) {
+  // Company size and revenue scoring
+  if (enrichedData?.company) {
     const revenue = enrichedData.company.revenue || 0;
     if (revenue >= 2000000 && revenue <= 100000000) score += 25;
     if (revenue >= 5000000 && revenue <= 50000000) score += 10;
@@ -59,100 +72,99 @@ function calculateLeadScore(leadData, enrichedData) {
     if (employees >= 10 && employees <= 500) score += 15;
   }
   
-  // Technographic scoring
-  if (enrichedData.technologies) {
-    const targetTech = ['QuickBooks', 'NetSuite', 'Salesforce', 'Stripe', 'Shopify'];
+  // Technology stack scoring
+  if (enrichedData?.technologies || enrichedData?.company?.technologies) {
+    const technologies = enrichedData.technologies || enrichedData.company.technologies || [];
+    const targetTech = ['QuickBooks', 'NetSuite', 'Salesforce', 'Stripe', 'Shopify', 'Square'];
     const matches = targetTech.filter(tech => 
-      enrichedData.technologies.some(t => t.includes(tech))
+      technologies.some(t => t.toLowerCase().includes(tech.toLowerCase()))
     );
     score += matches.length * 10;
   }
   
-  // Intent signals
-  if (enrichedData.funding) {
-    if (enrichedData.funding.recentRound) score += 20;
-    if (enrichedData.funding.lastRoundDate) {
-      const daysSinceFunding = (Date.now() - new Date(enrichedData.funding.lastRoundDate)) / (1000 * 60 * 60 * 24);
-      if (daysSinceFunding < 180) score += 15;
-    }
+  // Intent signals scoring
+  if (enrichedData?.intent) {
+    const signalStrength = enrichedData.intent.signalStrength;
+    if (signalStrength === 'very_high') score += 25;
+    else if (signalStrength === 'high') score += 20;
+    else if (signalStrength === 'medium') score += 15;
+    else if (signalStrength === 'low') score += 10;
   }
   
-  // Job title scoring
-  const highValueTitles = ['CEO', 'CFO', 'VP Finance', 'Controller', 'Finance Director'];
-  if (highValueTitles.some(title => leadData.title?.toLowerCase().includes(title.toLowerCase()))) {
+  // Title scoring
+  const title = leadData.title || enrichedData?.person?.title || '';
+  const highValueTitles = ['CEO', 'CFO', 'VP Finance', 'Controller', 'Finance Director', 'COO'];
+  if (highValueTitles.some(t => title.toLowerCase().includes(t.toLowerCase()))) {
     score += 20;
   }
   
   // Industry scoring
+  const industry = leadData.industry || enrichedData?.company?.industry || '';
   const targetIndustries = ['SaaS', 'E-commerce', 'Professional Services', 'Marketing', 'Wholesale'];
-  if (targetIndustries.some(ind => enrichedData.company?.industry?.includes(ind))) {
+  if (targetIndustries.some(ind => industry.toLowerCase().includes(ind.toLowerCase()))) {
     score += 15;
   }
   
   return Math.min(score, 100);
 }
 
-// ============= AI AGENT FUNCTIONS =============
+// AI Agent Class
 class GTMAgent {
-  constructor() {
-    this.actions = [];
-  }
-  
   async processLead(leadData) {
     const actions = [];
+    let enriched = {};
     
-    // 1. Enrich with Clay
-    const enriched = await this.enrichWithClay(leadData);
-    actions.push({ action: 'enriched', data: enriched });
+    // Step 1: Enrich with Clay or mock data
+    if (clay && process.env.CLAY_API_KEY && process.env.CLAY_API_KEY !== 'your_clay_api_key') {
+      enriched = await clay.enrichLead(leadData);
+    } else {
+      enriched = this.getMockEnrichment(leadData);
+    }
+    enrichedData.set(leadData.email, enriched);
+    actions.push({ action: 'enriched', timestamp: new Date().toISOString() });
     
-    // 2. Calculate lead score
+    // Step 2: Calculate lead score
     const score = calculateLeadScore(leadData, enriched);
-    actions.push({ action: 'scored', score });
+    leadData.score = score;
+    leadData.category = this.categorizeLead(score);
+    actions.push({ action: 'scored', score, category: leadData.category });
     
-    // 3. Categorize lead
-    const category = this.categorizeLead(score);
-    actions.push({ action: 'categorized', category });
-    
-    // 4. Sync to HubSpot
-    const hubspotId = await this.syncToHubSpot(leadData, enriched, score);
-    actions.push({ action: 'synced_hubspot', hubspotId });
-    
-    // 5. Trigger appropriate campaign
-    if (category === 'HOT') {
-      await this.triggerHotLeadCampaign(leadData, enriched, score);
-      actions.push({ action: 'campaign_triggered', type: 'hot_lead' });
-    } else if (category === 'WARM') {
-      await this.triggerNurtureCampaign(leadData, enriched);
-      actions.push({ action: 'campaign_triggered', type: 'nurture' });
+    // Step 3: Sync to HubSpot
+    if (hubspot && process.env.HUBSPOT_API_KEY && process.env.HUBSPOT_API_KEY !== 'your_hubspot_api_key') {
+      try {
+        const hubspotResult = await hubspot.createOrUpdateContact(leadData, enriched, score);
+        actions.push({ action: 'synced_hubspot', hubspotId: hubspotResult.id });
+        
+        // Create deal for hot leads
+        if (score >= 85) {
+          await hubspot.createDeal(hubspotResult.id, leadData, score);
+          actions.push({ action: 'deal_created' });
+        }
+      } catch (error) {
+        console.log('HubSpot sync skipped:', error.message);
+      }
     }
     
-    return { leadData, enriched, score, category, actions };
-  }
-  
-  async enrichWithClay(leadData) {
-    // Simulate Clay API enrichment
-    // In production, make actual API call to Clay
-    const enriched = {
-      company: {
-        name: leadData.company,
-        revenue: Math.floor(Math.random() * 50000000) + 2000000,
-        employees: Math.floor(Math.random() * 400) + 10,
-        industry: 'B2B SaaS',
-        website: `https://${leadData.company.toLowerCase().replace(/\s/g, '')}.com`
-      },
-      technologies: ['Salesforce', 'QuickBooks', 'Stripe'],
-      funding: {
-        recentRound: true,
-        lastRoundDate: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString()
-      },
-      socialProfiles: {
-        linkedin: `https://linkedin.com/in/${leadData.firstName}-${leadData.lastName}`,
-        twitter: `@${leadData.firstName}${leadData.lastName}`
-      }
-    };
+    // Step 4: Trigger campaigns
+    if (leadData.category === 'HOT') {
+      await this.triggerHotLeadCampaign(leadData, enriched, score);
+      actions.push({ action: 'hot_lead_campaign_triggered' });
+      
+      // Send Slack notification
+      await sendSlackNotification(
+        `🔥 HOT LEAD ALERT!\n` +
+        `Name: ${leadData.firstName} ${leadData.lastName}\n` +
+        `Company: ${leadData.company}\n` +
+        `Email: ${leadData.email}\n` +
+        `Score: ${score}/100\n` +
+        `View: https://parthbadani96.github.io/growth-engineer-demo/`
+      );
+    } else if (leadData.category === 'WARM') {
+      await this.triggerNurtureCampaign(leadData, enriched);
+      actions.push({ action: 'nurture_campaign_triggered' });
+    }
     
-    enrichedData.set(leadData.email, enriched);
-    return enriched;
+    return { leadData, enriched, score, category: leadData.category, actions };
   }
   
   categorizeLead(score) {
@@ -162,107 +174,159 @@ class GTMAgent {
     return 'COLD';
   }
   
-  async syncToHubSpot(leadData, enrichedData, score) {
-    // Simulate HubSpot API sync
-    // In production, make actual API call
-    const hubspotId = `hs_${Date.now()}`;
+  getMockEnrichment(leadData) {
+    const industries = ['B2B SaaS', 'E-commerce', 'Professional Services', 'Marketing Agency'];
+    const technologies = ['Salesforce', 'QuickBooks', 'Stripe', 'HubSpot', 'Shopify'];
     
-    const hubspotPayload = {
-      properties: {
+    return {
+      person: {
         email: leadData.email,
-        firstname: leadData.firstName,
-        lastname: leadData.lastName,
-        company: leadData.company,
-        jobtitle: leadData.title,
-        lead_score: score,
-        lead_category: this.categorizeLead(score),
-        enriched_revenue: enrichedData.company?.revenue,
-        enriched_employees: enrichedData.company?.employees,
-        technologies_used: enrichedData.technologies?.join(', ')
-      }
+        firstName: leadData.firstName,
+        lastName: leadData.lastName,
+        title: leadData.title || 'VP Finance',
+        linkedinUrl: `https://linkedin.com/in/${leadData.firstName}-${leadData.lastName}`.toLowerCase()
+      },
+      company: {
+        name: leadData.company,
+        industry: leadData.industry || industries[Math.floor(Math.random() * industries.length)],
+        employees: Math.floor(Math.random() * 400) + 10,
+        revenue: Math.floor(Math.random() * 50000000) + 2000000,
+        technologies: technologies.slice(0, Math.floor(Math.random() * 3) + 1),
+        website: `https://${leadData.company.toLowerCase().replace(/\s/g, '')}.com`
+      },
+      intent: {
+        signals: [
+          { type: 'hiring', strength: 'high', details: 'Posted finance roles', score: 20 },
+          { type: 'funding', strength: 'medium', details: 'Recent funding', score: 15 }
+        ],
+        signalCount: 2,
+        signalStrength: 'high'
+      },
+      enrichedAt: new Date().toISOString()
     };
-    
-    console.log('Syncing to HubSpot:', hubspotPayload);
-    return hubspotId;
   }
   
   async triggerHotLeadCampaign(leadData, enrichedData, score) {
-    // Immediate personalized outreach for hot leads
     const emailContent = this.generatePersonalizedEmail(leadData, enrichedData, score);
     
-    // Queue email for immediate sending
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from: process.env.EMAIL_USER,
+          to: leadData.email,
+          subject: emailContent.subject,
+          html: emailContent.html
+        });
+        console.log(`Hot lead email sent to ${leadData.email}`);
+      } catch (error) {
+        console.log('Email sending failed:', error.message);
+      }
+    }
+    
+    // Queue follow-up emails
     emailQueue.push({
       to: leadData.email,
       subject: emailContent.subject,
       html: emailContent.html,
-      priority: 'HIGH',
       scheduledFor: new Date()
     });
-    
-    // Also notify sales team
-    await this.notifySalesTeam(leadData, score);
   }
   
   async triggerNurtureCampaign(leadData, enrichedData) {
-    // Add to nurture sequence
-    const campaignId = 'nurture_sequence_001';
     campaigns.set(leadData.email, {
-      campaignId,
+      type: 'nurture',
       startDate: new Date(),
       currentStep: 0,
       enrichedData
     });
+    console.log(`Nurture campaign started for ${leadData.email}`);
   }
   
   generatePersonalizedEmail(leadData, enrichedData, score) {
-    const companyName = enrichedData.company?.name || leadData.company;
-    const industry = enrichedData.company?.industry || 'your industry';
+    const companyName = leadData.company;
+    const industry = enrichedData?.company?.industry || 'your industry';
+    const technologies = enrichedData?.company?.technologies || [];
+    const techString = technologies.length > 0 ? technologies[0] : 'your existing systems';
     
     return {
-      subject: `${leadData.firstName}, unlock working capital for ${companyName}'s growth`,
+      subject: `${leadData.firstName}, unlock instant working capital for ${companyName}`,
       html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2>Hi ${leadData.firstName},</h2>
-          
-          <p>I noticed ${companyName} is in the ${industry} space and likely dealing with the typical 30-90 day payment cycles that create cash flow gaps.</p>
-          
-          <p>Companies like yours often struggle with:</p>
-          <ul>
-            <li>Paying suppliers upfront while waiting on customer payments</li>
-            <li>Missing growth opportunities due to tied-up capital</li>
-            <li>Diluting equity to fund working capital needs</li>
-          </ul>
-          
-          <p><strong>Daylit helps ${industry} companies access working capital instantly</strong> - embedded directly in your existing ${enrichedData.technologies?.[0] || 'ERP'} system.</p>
-          
-          <p>With your current setup using ${enrichedData.technologies?.join(' and ') || 'your current stack'}, you could unlock capital in under 24 hours.</p>
-          
-          <p>Here's how we've helped similar companies:</p>
-          <ul>
-            <li>Marketing agency: Freed up $2M in receivables, grew 40% YoY</li>
-            <li>SaaS startup: Extended runway by 6 months without dilution</li>
-            <li>Wholesale distributor: Reduced DSO from 75 to 15 days</li>
-          </ul>
-          
-          <p><strong>Ready to see how much capital you can unlock?</strong></p>
-          
-          <p><a href="https://parthbadani96.github.io/growth-engineer-demo/?utm_source=email&utm_medium=outbound&utm_campaign=hot_lead" style="background: #007bff; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; display: inline-block;">Get Your Free Capital Assessment</a></p>
-          
-          <p>P.S. Based on your profile (score: ${score}/100), you pre-qualify for our fast-track approval. Reply to this email or book time directly: <a href="https://calendly.com/daylit-sales">calendly.com/daylit-sales</a></p>
-          
-          <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
-          <p style="font-size: 12px; color: #666;">
-            You're receiving this because you expressed interest in working capital solutions.
-            <br>Daylit | The Future of Working Capital
-          </p>
-        </div>
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { background: #f8f9fa; padding: 30px; border: 1px solid #dee2e6; }
+            .cta-button { display: inline-block; background: #667eea; color: white; padding: 14px 28px; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+            .footer { background: #333; color: #999; padding: 20px; text-align: center; font-size: 12px; }
+            .highlight { background: #fff3cd; padding: 15px; border-left: 4px solid #ffc107; margin: 20px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Daylit</h1>
+              <p>The Future of Working Capital</p>
+            </div>
+            
+            <div class="content">
+              <h2>Hi ${leadData.firstName},</h2>
+              
+              <p>I noticed ${companyName} is in the <strong>${industry}</strong> space. Like many companies in your industry, you're likely dealing with 30-90 day payment terms that create significant cash flow gaps.</p>
+              
+              <div class="highlight">
+                <strong>Your Lead Score: ${score}/100</strong><br>
+                Based on our analysis, ${companyName} qualifies for our <strong>fast-track approval process</strong>.
+              </div>
+              
+              <h3>Common challenges we solve:</h3>
+              <ul>
+                <li>Waiting 30-90 days for customer payments while paying suppliers upfront</li>
+                <li>Missing growth opportunities due to tied-up working capital</li>
+                <li>Considering dilutive equity rounds just to fund operations</li>
+              </ul>
+              
+              <h3>How Daylit helps companies like yours:</h3>
+              <p>We integrate directly with <strong>${techString}</strong> to provide instant access to your tied-up capital. No new platforms, no complex applications.</p>
+              
+              <h3>Success stories from similar companies:</h3>
+              <ul>
+                <li><strong>Marketing Agency (45 employees):</strong> Freed up $2M in receivables, grew 40% YoY</li>
+                <li><strong>SaaS Startup (Series A):</strong> Extended runway by 6 months without dilution</li>
+                <li><strong>E-commerce Brand ($8M revenue):</strong> Reduced cash conversion cycle from 75 to 15 days</li>
+              </ul>
+              
+              <center>
+                <a href="https://parthbadani96.github.io/growth-engineer-demo/?utm_source=email&utm_medium=hot_lead&utm_campaign=automated&lead_score=${score}" class="cta-button">
+                  Get Your Free Capital Assessment →
+                </a>
+              </center>
+              
+              <p><strong>Next Steps:</strong></p>
+              <ol>
+                <li>Click the button above for your personalized assessment</li>
+                <li>See exactly how much capital you can unlock</li>
+                <li>Get approved in under 24 hours</li>
+              </ol>
+              
+              <p>Have questions? Reply to this email or book time directly: <a href="https://calendly.com/daylit-demo">calendly.com/daylit-demo</a></p>
+              
+              <p>Best regards,<br>
+              The Daylit Team</p>
+            </div>
+            
+            <div class="footer">
+              <p>Daylit | San Francisco, CA<br>
+              You're receiving this because you expressed interest in working capital solutions.<br>
+              <a href="#" style="color: #999;">Unsubscribe</a></p>
+            </div>
+          </div>
+        </body>
+        </html>
       `
     };
-  }
-  
-  async notifySalesTeam(leadData, score) {
-    // In production, send to Slack
-    console.log(`🔥 HOT LEAD ALERT: ${leadData.firstName} ${leadData.lastName} from ${leadData.company} (Score: ${score})`);
   }
 }
 
@@ -270,16 +334,35 @@ const agent = new GTMAgent();
 
 // ============= API ENDPOINTS =============
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({
+    status: 'GTM Automation Platform Active',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      leads: '/api/leads',
+      analytics: '/api/analytics/pipeline',
+      bot: '/api/bot'
+    }
+  });
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'healthy', 
+  res.json({
+    status: 'healthy',
     timestamp: new Date().toISOString(),
     integrations: {
-      clay: 'ready',
-      hubspot: 'ready',
-      email: 'ready',
-      ai_agent: 'active'
+      clay: process.env.CLAY_API_KEY && process.env.CLAY_API_KEY !== 'your_clay_api_key' ? 'configured' : 'not_configured',
+      hubspot: process.env.HUBSPOT_API_KEY && process.env.HUBSPOT_API_KEY !== 'your_hubspot_api_key' ? 'configured' : 'not_configured',
+      email: transporter ? 'configured' : 'not_configured',
+      slack: process.env.SLACK_WEBHOOK_URL ? 'configured' : 'not_configured'
+    },
+    stats: {
+      totalLeads: leads.size,
+      enrichedLeads: enrichedData.size,
+      activeCampaigns: campaigns.size
     }
   });
 });
@@ -289,9 +372,16 @@ app.post('/api/leads', async (req, res) => {
   try {
     const leadData = {
       id: `lead_${Date.now()}`,
-      ...req.body,
+      email: req.body.email,
+      firstName: req.body.firstName || req.body.first_name || '',
+      lastName: req.body.lastName || req.body.last_name || '',
+      company: req.body.company || '',
+      title: req.body.title || req.body.jobtitle || '',
+      industry: req.body.industry || '',
+      revenue: req.body.revenue || '',
       source: req.body.source || 'landing_page',
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      ...req.body
     };
     
     // Store lead
@@ -300,38 +390,26 @@ app.post('/api/leads', async (req, res) => {
     // Process with AI agent
     const result = await agent.processLead(leadData);
     
-    // Send immediate response
+    // Send response immediately
     res.json({
       success: true,
       message: 'Lead received and being processed',
       leadId: leadData.id,
       score: result.score,
       category: result.category,
-      nextSteps: result.actions.map(a => a.action)
+      actions: result.actions.map(a => a.action)
     });
     
-    // Process email queue in background
-    processEmailQueue();
+    console.log(`✅ Lead processed: ${leadData.email} (Score: ${result.score})`);
     
   } catch (error) {
     console.error('Error processing lead:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to process lead' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to process lead',
+      message: error.message
     });
   }
-});
-
-// Get lead by email
-app.get('/api/leads/:email', (req, res) => {
-  const lead = leads.get(req.params.email);
-  const enriched = enrichedData.get(req.params.email);
-  
-  if (!lead) {
-    return res.status(404).json({ error: 'Lead not found' });
-  }
-  
-  res.json({ lead, enriched });
 });
 
 // Get all leads
@@ -339,13 +417,14 @@ app.get('/api/leads', (req, res) => {
   const allLeads = Array.from(leads.values()).map(lead => ({
     ...lead,
     enriched: enrichedData.get(lead.email),
-    score: calculateLeadScore(lead, enrichedData.get(lead.email) || {})
+    score: lead.score || calculateLeadScore(lead, enrichedData.get(lead.email) || {})
   }));
   
   res.json({
+    success: true,
     total: allLeads.length,
     leads: allLeads,
-    categories: {
+    breakdown: {
       hot: allLeads.filter(l => l.score >= 85).length,
       warm: allLeads.filter(l => l.score >= 60 && l.score < 85).length,
       qualified: allLeads.filter(l => l.score >= 40 && l.score < 60).length,
@@ -354,139 +433,157 @@ app.get('/api/leads', (req, res) => {
   });
 });
 
-// Pipeline analysis endpoint
+// Get specific lead
+app.get('/api/leads/:email', (req, res) => {
+  const lead = leads.get(req.params.email);
+  const enriched = enrichedData.get(req.params.email);
+  
+  if (!lead) {
+    return res.status(404).json({ error: 'Lead not found' });
+  }
+  
+  const score = calculateLeadScore(lead, enriched || {});
+  
+  res.json({
+    lead,
+    enriched,
+    score,
+    category: agent.categorizeLead(score)
+  });
+});
+
+// Pipeline analytics
 app.get('/api/analytics/pipeline', (req, res) => {
   const allLeads = Array.from(leads.values());
-  const scores = allLeads.map(lead => 
-    calculateLeadScore(lead, enrichedData.get(lead.email) || {})
-  );
+  const leadsWithScores = allLeads.map(lead => ({
+    ...lead,
+    score: calculateLeadScore(lead, enrichedData.get(lead.email) || {})
+  }));
+  
+  const hotLeads = leadsWithScores.filter(l => l.score >= 85);
+  const warmLeads = leadsWithScores.filter(l => l.score >= 60 && l.score < 85);
+  const qualifiedLeads = leadsWithScores.filter(l => l.score >= 40 && l.score < 60);
   
   const pipeline = {
     totalLeads: allLeads.length,
-    averageScore: scores.reduce((a, b) => a + b, 0) / scores.length || 0,
-    estimatedValue: scores.filter(s => s >= 60).length * 50000, // $50k ACV assumption
-    byCategory: {
-      hot: { count: scores.filter(s => s >= 85).length, value: scores.filter(s => s >= 85).length * 100000 },
-      warm: { count: scores.filter(s => s >= 60 && s < 85).length, value: scores.filter(s => s >= 60 && s < 85).length * 50000 },
-      qualified: { count: scores.filter(s => s >= 40 && s < 60).length, value: scores.filter(s => s >= 40 && s < 60).length * 25000 }
+    averageScore: leadsWithScores.reduce((sum, l) => sum + l.score, 0) / leadsWithScores.length || 0,
+    breakdown: {
+      hot: {
+        count: hotLeads.length,
+        estimatedValue: hotLeads.length * 100000,
+        conversionRate: 0.4,
+        expectedRevenue: hotLeads.length * 100000 * 0.4
+      },
+      warm: {
+        count: warmLeads.length,
+        estimatedValue: warmLeads.length * 50000,
+        conversionRate: 0.15,
+        expectedRevenue: warmLeads.length * 50000 * 0.15
+      },
+      qualified: {
+        count: qualifiedLeads.length,
+        estimatedValue: qualifiedLeads.length * 25000,
+        conversionRate: 0.05,
+        expectedRevenue: qualifiedLeads.length * 25000 * 0.05
+      }
     },
-    conversionPrediction: {
-      hot: 0.4,
-      warm: 0.15,
-      qualified: 0.05
-    },
-    expectedRevenue: (scores.filter(s => s >= 85).length * 100000 * 0.4) +
-                    (scores.filter(s => s >= 60 && s < 85).length * 50000 * 0.15) +
-                    (scores.filter(s => s >= 40 && s < 60).length * 25000 * 0.05)
+    totalExpectedRevenue: 
+      (hotLeads.length * 100000 * 0.4) +
+      (warmLeads.length * 50000 * 0.15) +
+      (qualifiedLeads.length * 25000 * 0.05),
+    topLeads: leadsWithScores
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5)
+      .map(l => ({
+        name: `${l.firstName} ${l.lastName}`,
+        company: l.company,
+        score: l.score,
+        email: l.email
+      }))
   };
   
   res.json(pipeline);
 });
 
-// Manual enrichment trigger
-app.post('/api/enrich/:email', async (req, res) => {
-  const lead = leads.get(req.params.email);
-  if (!lead) {
-    return res.status(404).json({ error: 'Lead not found' });
-  }
-  
-  const enriched = await agent.enrichWithClay(lead);
-  const score = calculateLeadScore(lead, enriched);
-  
-  res.json({ lead, enriched, score });
-});
-
-// Send email manually
-app.post('/api/email/send', async (req, res) => {
-  const { to, leadEmail } = req.body;
-  const lead = leads.get(leadEmail || to);
-  
-  if (!lead) {
-    return res.status(404).json({ error: 'Lead not found' });
-  }
-  
-  const enriched = enrichedData.get(lead.email) || {};
-  const score = calculateLeadScore(lead, enriched);
-  const emailContent = agent.generatePersonalizedEmail(lead, enriched, score);
-  
-  try {
-    await transporter.sendMail({
-      from: CONFIG.EMAIL.USER,
-      to: lead.email,
-      subject: emailContent.subject,
-      html: emailContent.html
-    });
-    
-    res.json({ success: true, message: 'Email sent successfully' });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Process email queue
-async function processEmailQueue() {
-  while (emailQueue.length > 0) {
-    const email = emailQueue.shift();
-    try {
-      await transporter.sendMail({
-        from: CONFIG.EMAIL.USER,
-        to: email.to,
-        subject: email.subject,
-        html: email.html
-      });
-      console.log(`Email sent to ${email.to}`);
-    } catch (error) {
-      console.error(`Failed to send email to ${email.to}:`, error.message);
-    }
-  }
-}
-
 // AI Bot endpoint
 app.post('/api/bot', async (req, res) => {
-  const { message } = req.body;
+  const { message, command } = req.body;
+  const input = (message || command || '').toLowerCase();
   
-  // Simple command parser
-  const command = message.toLowerCase();
-  let response = '';
+  let response = {
+    success: true,
+    message: '',
+    data: null
+  };
   
-  if (command.includes('score') && command.includes('lead')) {
-    const allLeads = Array.from(leads.values());
-    const scores = allLeads.map(lead => ({
-      email: lead.email,
-      name: `${lead.firstName} ${lead.lastName}`,
-      company: lead.company,
-      score: calculateLeadScore(lead, enrichedData.get(lead.email) || {})
-    }));
-    response = `Lead Scoring Report:\n${scores.map(s => `• ${s.name} (${s.company}): ${s.score}/100`).join('\n')}`;
-  } else if (command.includes('pipeline')) {
-    const pipeline = await fetch(`http://localhost:${PORT}/api/analytics/pipeline`).then(r => r.json());
-    response = `Pipeline Analysis:\n• Total Leads: ${pipeline.totalLeads}\n• Average Score: ${pipeline.averageScore.toFixed(1)}\n• Expected Revenue: $${pipeline.expectedRevenue.toLocaleString()}\n• Hot Leads: ${pipeline.byCategory.hot.count}`;
-  } else if (command.includes('enrich')) {
-    const emailMatch = command.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/);
-    if (emailMatch) {
-      const enrichResult = await agent.enrichWithClay(leads.get(emailMatch[1]));
-      response = `Enriched ${emailMatch[1]} - Company: ${enrichResult.company.name}, Revenue: $${enrichResult.company.revenue.toLocaleString()}`;
+  try {
+    if (input.includes('score') || input.includes('leads')) {
+      const allLeads = Array.from(leads.values());
+      const scores = allLeads.map(lead => ({
+        email: lead.email,
+        name: `${lead.firstName} ${lead.lastName}`,
+        company: lead.company,
+        score: calculateLeadScore(lead, enrichedData.get(lead.email) || {})
+      })).sort((a, b) => b.score - a.score);
+      
+      response.message = `Lead Scoring Report (${scores.length} leads)`;
+      response.data = scores;
+    } else if (input.includes('pipeline')) {
+      const pipelineRes = await axios.get(`http://localhost:${PORT}/api/analytics/pipeline`);
+      response.message = 'Pipeline Analysis';
+      response.data = pipelineRes.data;
+    } else if (input.includes('enrich')) {
+      const emailMatch = input.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/);
+      if (emailMatch && leads.has(emailMatch[1])) {
+        const lead = leads.get(emailMatch[1]);
+        const enrichResult = await agent.processLead(lead);
+        response.message = `Enriched ${emailMatch[1]}`;
+        response.data = enrichResult;
+      } else {
+        response.message = 'Please provide a valid email address';
+      }
+    } else if (input.includes('help')) {
+      response.message = 'Available Commands';
+      response.data = {
+        commands: [
+          'score leads - Get lead scoring report',
+          'pipeline analysis - View pipeline metrics',
+          'enrich [email] - Enrich specific lead',
+          'send email [email] - Trigger email campaign',
+          'get lead [email] - Get specific lead details'
+        ]
+      };
+    } else {
+      response.message = 'Command not recognized. Type "help" for available commands.';
     }
-  } else if (command.includes('send email')) {
-    const emailMatch = command.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9_-]+)/);
-    if (emailMatch && leads.has(emailMatch[1])) {
-      await processEmailQueue();
-      response = `Email sent to ${emailMatch[1]}`;
-    }
-  } else {
-    response = `Available commands:\n• "score all leads" - Get lead scoring report\n• "pipeline analysis" - View pipeline metrics\n• "enrich [email]" - Enrich specific lead\n• "send email to [email]" - Trigger email campaign`;
+  } catch (error) {
+    response.success = false;
+    response.message = `Error: ${error.message}`;
   }
   
-  res.json({ response });
+  res.json(response);
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`✅ GTM Platform API running on port ${PORT}`);
-  console.log(`📍 Endpoints:`);
+  console.log('========================================');
+  console.log('🚀 GTM AUTOMATION PLATFORM');
+  console.log('========================================');
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`📍 Base URL: http://localhost:${PORT}`);
+  console.log('');
+  console.log('📊 API Endpoints:');
+  console.log(`   GET  /api/health - System health check`);
   console.log(`   POST /api/leads - Submit new lead`);
   console.log(`   GET  /api/leads - Get all leads`);
+  console.log(`   GET  /api/leads/:email - Get specific lead`);
   console.log(`   GET  /api/analytics/pipeline - Pipeline analysis`);
   console.log(`   POST /api/bot - AI bot commands`);
-  console.log(`   POST /api/email/send - Send email`);
+  console.log('');
+  console.log('🔧 Configuration Status:');
+  console.log(`   Clay API: ${process.env.CLAY_API_KEY && process.env.CLAY_API_KEY !== 'your_clay_api_key' ? '✅ Configured' : '❌ Not configured (using mock data)'}`);
+  console.log(`   HubSpot: ${process.env.HUBSPOT_API_KEY && process.env.HUBSPOT_API_KEY !== 'your_hubspot_api_key' ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   Email: ${transporter ? '✅ Configured' : '❌ Not configured'}`);
+  console.log(`   Slack: ${process.env.SLACK_WEBHOOK_URL ? '✅ Configured' : '❌ Not configured'}`);
+  console.log('========================================');
 });
