@@ -1,4 +1,5 @@
 // Complete GTM Automation Server with All Working Integrations
+// UPDATED SCORING THRESHOLDS: Hot ≥40, Warm 10-39, Cold 0-9
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -43,18 +44,59 @@ if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
   });
 }
 
-// Slack notification
-async function sendSlackNotification(message) {
-  if (process.env.SLACK_WEBHOOK_URL) {
-    try {
-      await axios.post(process.env.SLACK_WEBHOOK_URL, {
-        text: message,
-        icon_emoji: ':fire:',
-        username: 'GTM Bot'
-      });
-    } catch (error) {
-      console.log('Slack notification failed:', error.message);
+// Slack notification with tiered messaging
+async function sendSlackNotification(category, leadData, score) {
+  if (!process.env.SLACK_WEBHOOK_URL) return;
+  
+  try {
+    let emoji, color, message;
+    
+    if (category === 'HOT') {
+      emoji = ':fire:';
+      color = '#FF4444';
+      message = `🔥 *HOT LEAD ALERT!* (Score: ${score}/100)\n` +
+        `*Name:* ${leadData.firstName} ${leadData.lastName}\n` +
+        `*Company:* ${leadData.company}\n` +
+        `*Title:* ${leadData.title || 'N/A'}\n` +
+        `*Email:* ${leadData.email}\n` +
+        `*Action Required:* Immediate follow-up recommended\n` +
+        `View: https://parthbadani96.github.io/growth-engineer-demo/`;
+    } else if (category === 'WARM') {
+      emoji = ':sunny:';
+      color = '#FFA500';
+      message = `☀️ *WARM LEAD* (Score: ${score}/100)\n` +
+        `*Name:* ${leadData.firstName} ${leadData.lastName}\n` +
+        `*Company:* ${leadData.company}\n` +
+        `*Email:* ${leadData.email}\n` +
+        `*Action:* Add to nurture campaign\n` +
+        `View: https://parthbadani96.github.io/growth-engineer-demo/`;
+    } else if (category === 'COLD') {
+      emoji = ':snowflake:';
+      color = '#87CEEB';
+      message = `❄️ *COLD LEAD* (Score: ${score}/100)\n` +
+        `*Name:* ${leadData.firstName} ${leadData.lastName}\n` +
+        `*Company:* ${leadData.company}\n` +
+        `*Email:* ${leadData.email}\n` +
+        `*Action:* Monitor for engagement\n` +
+        `View: https://parthbadani96.github.io/growth-engineer-demo/`;
     }
+    
+    await axios.post(process.env.SLACK_WEBHOOK_URL, {
+      text: message,
+      icon_emoji: emoji,
+      username: 'GTM Bot',
+      attachments: [{
+        color: color,
+        fields: [
+          { title: 'Lead Category', value: category, short: true },
+          { title: 'Score', value: `${score}/100`, short: true }
+        ]
+      }]
+    });
+    
+    console.log(`✅ Slack notification sent: ${category} lead - ${leadData.email}`);
+  } catch (error) {
+    console.log('Slack notification failed:', error.message);
   }
 }
 
@@ -135,8 +177,8 @@ class GTMAgent {
         const hubspotResult = await hubspot.createOrUpdateContact(leadData, enriched, score);
         actions.push({ action: 'synced_hubspot', hubspotId: hubspotResult.id });
         
-        // Create deal for hot leads
-        if (score >= 85) {
+        // Create deal for hot leads (score >= 40)
+        if (score >= 40) {
           await hubspot.createDeal(hubspotResult.id, leadData, score);
           actions.push({ action: 'deal_created' });
         }
@@ -145,33 +187,33 @@ class GTMAgent {
       }
     }
     
-    // Step 4: Trigger campaigns
+    // Step 4: Trigger campaigns and Slack notifications based on category
     if (leadData.category === 'HOT') {
       await this.triggerHotLeadCampaign(leadData, enriched, score);
       actions.push({ action: 'hot_lead_campaign_triggered' });
       
-      // Send Slack notification
-      await sendSlackNotification(
-        `🔥 HOT LEAD ALERT!\n` +
-        `Name: ${leadData.firstName} ${leadData.lastName}\n` +
-        `Company: ${leadData.company}\n` +
-        `Email: ${leadData.email}\n` +
-        `Score: ${score}/100\n` +
-        `View: https://parthbadani96.github.io/growth-engineer-demo/`
-      );
+      // Send HOT lead Slack notification
+      await sendSlackNotification('HOT', leadData, score);
     } else if (leadData.category === 'WARM') {
       await this.triggerNurtureCampaign(leadData, enriched);
       actions.push({ action: 'nurture_campaign_triggered' });
+      
+      // Send WARM lead Slack notification
+      await sendSlackNotification('WARM', leadData, score);
+    } else if (leadData.category === 'COLD') {
+      // Send COLD lead Slack notification
+      await sendSlackNotification('COLD', leadData, score);
+      actions.push({ action: 'cold_lead_logged' });
     }
     
     return { leadData, enriched, score, category: leadData.category, actions };
   }
   
+  // UPDATED: New scoring thresholds
   categorizeLead(score) {
-    if (score >= 85) return 'HOT';
-    if (score >= 60) return 'WARM';
-    if (score >= 40) return 'QUALIFIED';
-    return 'COLD';
+    if (score >= 40) return 'HOT';      // Hot: 40-100
+    if (score >= 10) return 'WARM';     // Warm: 10-39
+    return 'COLD';                       // Cold: 0-9
   }
   
   getMockEnrichment(leadData) {
@@ -339,6 +381,11 @@ app.get('/', (req, res) => {
   res.json({
     status: 'GTM Automation Platform Active',
     version: '1.0.0',
+    scoringThresholds: {
+      hot: '≥40',
+      warm: '10-39',
+      cold: '0-9'
+    },
     endpoints: {
       health: '/api/health',
       leads: '/api/leads',
@@ -400,7 +447,7 @@ app.post('/api/leads', async (req, res) => {
       actions: result.actions.map(a => a.action)
     });
     
-    console.log(`✅ Lead processed: ${leadData.email} (Score: ${result.score})`);
+    console.log(`✅ Lead processed: ${leadData.email} (Score: ${result.score}, Category: ${result.category})`);
     
   } catch (error) {
     console.error('Error processing lead:', error);
@@ -425,10 +472,9 @@ app.get('/api/leads', (req, res) => {
     total: allLeads.length,
     leads: allLeads,
     breakdown: {
-      hot: allLeads.filter(l => l.score >= 85).length,
-      warm: allLeads.filter(l => l.score >= 60 && l.score < 85).length,
-      qualified: allLeads.filter(l => l.score >= 40 && l.score < 60).length,
-      cold: allLeads.filter(l => l.score < 40).length
+      hot: allLeads.filter(l => l.score >= 40).length,
+      warm: allLeads.filter(l => l.score >= 10 && l.score < 40).length,
+      cold: allLeads.filter(l => l.score < 10).length
     }
   });
 });
@@ -460,9 +506,9 @@ app.get('/api/analytics/pipeline', (req, res) => {
     score: calculateLeadScore(lead, enrichedData.get(lead.email) || {})
   }));
   
-  const hotLeads = leadsWithScores.filter(l => l.score >= 85);
-  const warmLeads = leadsWithScores.filter(l => l.score >= 60 && l.score < 85);
-  const qualifiedLeads = leadsWithScores.filter(l => l.score >= 40 && l.score < 60);
+  const hotLeads = leadsWithScores.filter(l => l.score >= 40);
+  const warmLeads = leadsWithScores.filter(l => l.score >= 10 && l.score < 40);
+  const coldLeads = leadsWithScores.filter(l => l.score < 10);
   
   const pipeline = {
     totalLeads: allLeads.length,
@@ -480,17 +526,17 @@ app.get('/api/analytics/pipeline', (req, res) => {
         conversionRate: 0.15,
         expectedRevenue: warmLeads.length * 50000 * 0.15
       },
-      qualified: {
-        count: qualifiedLeads.length,
-        estimatedValue: qualifiedLeads.length * 25000,
-        conversionRate: 0.05,
-        expectedRevenue: qualifiedLeads.length * 25000 * 0.05
+      cold: {
+        count: coldLeads.length,
+        estimatedValue: coldLeads.length * 10000,
+        conversionRate: 0.02,
+        expectedRevenue: coldLeads.length * 10000 * 0.02
       }
     },
     totalExpectedRevenue: 
       (hotLeads.length * 100000 * 0.4) +
       (warmLeads.length * 50000 * 0.15) +
-      (qualifiedLeads.length * 25000 * 0.05),
+      (coldLeads.length * 10000 * 0.02),
     topLeads: leadsWithScores
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
@@ -551,7 +597,12 @@ app.post('/api/bot', async (req, res) => {
           'enrich [email] - Enrich specific lead',
           'send email [email] - Trigger email campaign',
           'get lead [email] - Get specific lead details'
-        ]
+        ],
+        scoringThresholds: {
+          hot: 'Score ≥ 40',
+          warm: 'Score 10-39',
+          cold: 'Score 0-9'
+        }
       };
     } else {
       response.message = 'Command not recognized. Type "help" for available commands.';
@@ -571,6 +622,11 @@ app.listen(PORT, () => {
   console.log('========================================');
   console.log(`✅ Server running on port ${PORT}`);
   console.log(`📍 Base URL: http://localhost:${PORT}`);
+  console.log('');
+  console.log('📊 Lead Scoring Thresholds:');
+  console.log(`   🔥 HOT:  Score ≥ 40`);
+  console.log(`   ☀️  WARM: Score 10-39`);
+  console.log(`   ❄️  COLD: Score 0-9`);
   console.log('');
   console.log('📊 API Endpoints:');
   console.log(`   GET  /api/health - System health check`);
